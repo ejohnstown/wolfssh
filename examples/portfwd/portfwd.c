@@ -88,7 +88,9 @@ static void ShowUsage(void)
            " -F <host>     host to forward from, default %s\n"
            " -f <num>      host port to forward from (REQUIRED)\n"
            " -T <host>     host to forward to, default to host\n"
-           " -t <num>      port to forward to (REQUIRED)\n",
+           " -t <num>      port to forward to (REQUIRED)\n"
+           " -L <opts>     local forward\n"
+           " -R <opts>     remote forward\n",
            LIBWOLFSSH_VERSION_STRING,
            wolfSshIp, wolfSshPort, defaultFwdFromHost);
 }
@@ -211,6 +213,22 @@ static int wsPublicKeyCheck(const byte* pubKey, word32 pubKeySz, void* ctx)
 }
 
 
+static int ParsePorts(const char* ports)
+{
+    char *token, *copy, *orig;
+
+    orig = copy = strdup(ports);
+
+    while ((token = strsep(&copy, ":")) != NULL) {
+        printf("  token: %s\n", token);
+    }
+
+    free(orig);
+
+    return 0;
+}
+
+
 /*
  * fwdFromHost - address to bind the local listener socket to (default: any)
  * fwdFromHostPort - port number to bind the local listener socket to
@@ -250,6 +268,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
     int ret;
     int ch;
     int appFdSet = 0;
+    int isLocal = 0;
+    const char* fwdOpts = NULL;
     struct timeval to;
     WOLFSSH_CHANNEL* fwdChannel = NULL;
     byte* appBuffer = NULL;
@@ -265,7 +285,7 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
 
     ((func_args*)args)->return_code = 0;
 
-    while ((ch = mygetopt(argc, argv, "?f:h:p:t:u:F:P:T:")) != -1) {
+    while ((ch = mygetopt(argc, argv, "?f:h:p:t:u:F:L:P:R:T:")) != -1) {
         switch (ch) {
             case 'h':
                 host = myoptarg;
@@ -309,6 +329,16 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
                 fwdToHost = myoptarg;
                 break;
 
+            case 'L':
+                isLocal = 1;
+                fwdOpts = myoptarg;
+                break;
+
+            case 'R':
+                isLocal = 0;
+                fwdOpts = myoptarg;
+                break;
+
             case '?':
                 ShowUsage();
                 exit(EXIT_SUCCESS);
@@ -335,10 +365,16 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
            " * username: %s\n"
            " * password: %s\n"
            " * forward from: %s:%u\n"
-           " * forward to: %s:%u\n",
+           " * forward to: %s:%u\n"
+           " * options: (%s) %s\n",
            host, port, username, password,
            fwdFromHost, fwdFromPort,
-           fwdToHost, fwdToPort);
+           fwdToHost, fwdToPort,
+           isLocal ? "local" : "remote",
+           fwdOpts ? fwdOpts : "none");
+
+    if (fwdOpts != NULL)
+        ParsePorts(fwdOpts);
 
 #ifdef WOLFSSH_SMALL_STACK
     appBuffer = (byte*)WMALLOC(EXAMPLE_BUFFER_SZ, NULL, 0);
