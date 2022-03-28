@@ -455,7 +455,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
         }
     }
 
-    while (ssh->acceptState != ACCEPT_CLIENT_SESSION_ESTABLISHED) {
+    while (ssh->acceptState != ACCEPT_SERVER_USERAUTH_SENT) {
         switch (ssh->acceptState) {
 
             case ACCEPT_BEGIN:
@@ -546,7 +546,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
                 NO_BREAK;
-
+#if 0
             case ACCEPT_SERVER_USERAUTH_SENT:
                 while (ssh->clientState < CLIENT_CHANNEL_OPEN_DONE) {
                     if (DoReceive(ssh) < 0) {
@@ -653,7 +653,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
             case ACCEPT_INIT_SFTP:
                 return wolfSSH_SFTP_accept(ssh);
 #endif
-
+#endif /* 0 */
         }
     } /* end while */
 
