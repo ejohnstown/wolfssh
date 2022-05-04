@@ -380,6 +380,7 @@ WOLFSSH_LOCAL void ShrinkBuffer(Buffer* buf, int);
 struct WOLFSSH_CTX {
     void* heap;                       /* heap hint */
     WS_CallbackIORecv ioRecvCb;       /* I/O Receive Callback */
+    WS_CallbackIORecv ioPeekCb;       /* I/O Peek Callback */
     WS_CallbackIOSend ioSendCb;       /* I/O Send Callback */
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
     WS_CallbackHighwater highwaterCb; /* Data Highwater Mark Callback */
@@ -750,12 +751,14 @@ WOLFSSH_LOCAL int GetStringRef(word32*, byte**, byte*, word32, word32*);
 
 /* default I/O handlers */
 WOLFSSH_LOCAL int wsEmbedRecv(WOLFSSH*, void*, word32, void*);
+WOLFSSH_LOCAL int wsEmbedPeek(WOLFSSH*, void*, word32, void*);
 WOLFSSH_LOCAL int wsEmbedSend(WOLFSSH*, void*, word32, void*);
 
 #endif /* WOLFSSH_USER_IO */
 
 
 WOLFSSH_LOCAL int DoReceive(WOLFSSH*);
+WOLFSSH_LOCAL int DoPeek(WOLFSSH*);
 WOLFSSH_LOCAL int DoProtoId(WOLFSSH*);
 WOLFSSH_LOCAL int wolfSSH_SendPacket(WOLFSSH*);
 WOLFSSH_LOCAL int SendProtoId(WOLFSSH*);

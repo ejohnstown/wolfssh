@@ -59,6 +59,14 @@ void wolfSSH_SetIORecv(WOLFSSH_CTX* ctx, WS_CallbackIORecv cb)
 }
 
 
+/* install I/O peek callback */
+void wolfSSH_SetIOPeek(WOLFSSH_CTX* ctx, WS_CallbackIORecv cb)
+{
+    if (ctx)
+        ctx->ioPeekCb = cb;
+}
+
+
 /* install I/O send callback */
 void wolfSSH_SetIOSend(WOLFSSH_CTX* ctx, WS_CallbackIOSend cb)
 {
@@ -364,6 +372,86 @@ int wsEmbedRecv(WOLFSSH* ssh, void* data, word32 sz, void* ctx)
     }
 
     return recvd;
+}
+
+
+int wsEmbedPeek(WOLFSSH* ssh, void* ctx)
+{
+#define WOLFSSH_USE_IOCTL
+#ifdef WOLFSSH_USE_IOCTL
+    int bytes = 0;
+    Buffer* inputBuffer;
+
+    if (ssh == NULL)
+        return;
+
+    inputBuffer = &ssh->channelList->inputBuffer;
+    WIOCTL(wolfSSH_get_fd(ssh), WFIONREAD, &bytes);
+    while (bytes > 0) { /* there is something to read off the wire */
+        if (inputBuffer->length - inputBuffer->idx > MAX_PACKET_SZ) {
+            WLOG(WS_LOG_DEBUG, "Application data to be read");
+            break; /* too much application data! */
+        }
+        if (DoReceive(ssh) < 0) {
+            WLOG(WS_LOG_ERROR, "Error trying to read potential window adjust");
+        }
+        WIOCTL(wolfSSH_get_fd(ssh), WFIONREAD, &bytes);
+    }
+#else
+    /* Use recv peek. */
+    int recvd;
+    int err;
+    WS_SOCKET_T sd = *(WS_SOCKET_T*)ctx;
+    char* buf = (char*)data;
+
+#ifdef WOLFSSH_TEST_BLOCK
+    if (tcp_select(sd, 1) == WS_SELECT_RECV_READY &&
+            (rand() % 100) < WOLFSSH_BLOCK_PROB) {
+        printf("Forced read block\n");
+        return WS_CBIO_ERR_WANT_READ;
+    }
+#endif
+
+    recvd = (int)RECV_FUNCTION(sd, buf, sz, ssh->rflags);
+
+    recvd = TranslateReturnCode(recvd, sd);
+
+    if (recvd < 0) {
+        err = LastError();
+        WLOG(WS_LOG_DEBUG,"Embed Receive error");
+
+        if (err == SOCKET_EWOULDBLOCK || err == SOCKET_EAGAIN) {
+            WLOG(WS_LOG_DEBUG,"    Would block");
+            return WS_CBIO_ERR_WANT_READ;
+        }
+        else if (err == SOCKET_ECONNRESET) {
+            WLOG(WS_LOG_DEBUG,"    Connection reset");
+            return WS_CBIO_ERR_CONN_RST;
+        }
+        else if (err == SOCKET_EINTR) {
+            WLOG(WS_LOG_DEBUG,"    Socket interrupted");
+            return WS_CBIO_ERR_ISR;
+        }
+        else if (err == SOCKET_ECONNREFUSED) {
+            WLOG(WS_LOG_DEBUG,"    Connection refused");
+            return WS_CBIO_ERR_WANT_READ;
+        }
+        else if (err == SOCKET_ECONNABORTED) {
+            WLOG(WS_LOG_DEBUG,"    Connection aborted");
+            return WS_CBIO_ERR_CONN_CLOSE;
+        }
+        else {
+            WLOG(WS_LOG_DEBUG,"    General error");
+            return WS_CBIO_ERR_GENERAL;
+        }
+    }
+    else if (recvd == 0) {
+        WLOG(WS_LOG_DEBUG,"Embed receive connection closed");
+        return WS_CBIO_ERR_CONN_CLOSE;
+    }
+
+    return recvd;
+#endif
 }
 
 

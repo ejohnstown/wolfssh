@@ -150,6 +150,7 @@ WOLFSSH_API const char* wolfSSH_ErrorToName(int);
 typedef int (*WS_CallbackIORecv)(WOLFSSH*, void*, word32, void*);
 typedef int (*WS_CallbackIOSend)(WOLFSSH*, void*, word32, void*);
 WOLFSSH_API void wolfSSH_SetIORecv(WOLFSSH_CTX*, WS_CallbackIORecv);
+WOLFSSH_API void wolfSSH_SetIOPeek(WOLFSSH_CTX*, WS_CallbackIORecv);
 WOLFSSH_API void wolfSSH_SetIOSend(WOLFSSH_CTX*, WS_CallbackIOSend);
 WOLFSSH_API void wolfSSH_SetIOReadCtx(WOLFSSH*, void*);
 WOLFSSH_API void wolfSSH_SetIOWriteCtx(WOLFSSH*, void*);
@@ -264,6 +265,7 @@ typedef enum {
 WOLFSSH_API WS_SessionType wolfSSH_GetSessionType(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_GetSessionCommand(const WOLFSSH*);
 WOLFSSH_API int wolfSSH_SetChannelType(WOLFSSH*, byte, byte*, word32);
+WOLFSSH_API int wolfSSH_CheckReceivePending(WOLFSSH* ssh);
 
 
 enum WS_HighwaterSide {

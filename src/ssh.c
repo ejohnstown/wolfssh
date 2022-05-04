@@ -2181,6 +2181,29 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
 }
 
 
+/* Protocols that have loops over wolfSSH_stream_send without doing any reads
+ * will run into the issue of not checking for a peer window adjustment packet.
+ * This function allows for checking for a peer window adjustment packet without
+ * requiring a read buffer and call to wolfSSH_stream_read.
+ *
+ * Data that is read and is not related to packet headers is stored in the
+ * WOLFSSH input buffer and can be gotten with a call to wolfSSH_stream_read. If
+ * more data is stored then MAX_PACKET_SZ then no more window adjustment packets
+ * are searched for.
+ */
+int wolfSSH_CheckReceivePending(WOLFSSH* ssh)
+{
+    int ret;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_CheckReceivePending()");
+
+    ret = DoPeek(ssh);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_CheckReceivePending(), ret = %d", ret);
+    return ret;
+}
+
+
 #ifdef WOLFSSH_SHOW_SIZES
 
 void wolfSSH_ShowSizes(void)

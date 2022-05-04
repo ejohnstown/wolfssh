@@ -500,6 +500,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->side = side;
 #ifndef WOLFSSH_USER_IO
     ctx->ioRecvCb = wsEmbedRecv;
+    ctx->ioPeekCb = wsEmbedPeek;
     ctx->ioSendCb = wsEmbedSend;
 #endif /* WOLFSSH_USER_IO */
     ctx->highwaterMark = DEFAULT_HIGHWATER_MARK;
@@ -1550,7 +1551,7 @@ static int Receive(WOLFSSH* ssh, byte* buf, word32 sz)
 
     if (ssh->ctx->ioRecvCb == NULL) {
         WLOG(WS_LOG_DEBUG, "Your IO Recv callback is null, please set");
-        return -1;
+        return WS_MISSING_CALLBACK;
     }
 
 retry:
@@ -6152,6 +6153,69 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
     return ret;
 }
 #endif /* WOLFSSH_NO_AEAD */
+
+
+int DoPeek(WOLFSSH* ssh)
+{
+    int ret = WS_SUCCESS;
+
+    if (ssh == NULL)
+        ret = WS_ERROR;
+
+    if (ret == WS_SUCCESS) {
+        if (ssh->ctx->ioPeekCb == NULL) {
+            WLOG(WS_LOG_DEBUG, "Your IO Peek callback is null, please set");
+            ssh->error = WS_MISSING_CALLBACK;
+            ret = WS_ERROR;
+        }
+    }
+
+    if (ret == WS_SUCCESS) {
+        byte peekBuf[MIN_BLOCK_SZ];
+        int recvd;
+retry:
+        recvd = ssh->ctx->ioPeekCb(ssh, peekBuf, MIN_BLOCK_SZ, ssh->ioReadCtx);
+        WLOG(WS_LOG_DEBUG, "Peek: recvd = %d", recvd);
+        switch (recvd) {
+            case WS_CBIO_ERR_GENERAL:        /* general/unknown error */
+                ssh->error = WS_SOCKET_ERROR_E;
+                ret = WS_ERROR;
+                break;
+
+            case WS_CBIO_ERR_WANT_READ:      /* want read, would block */
+                ssh->error = WS_WANT_READ;
+                ret = WS_ERROR;
+                break;
+
+            case WS_CBIO_ERR_CONN_RST:       /* connection reset */
+                ssh->connReset = 1;
+                ssh->error = WS_SOCKET_ERROR_E;
+                ret = WS_ERROR;
+                break;
+
+            case WS_CBIO_ERR_ISR:            /* interrupt */
+                goto retry;
+
+            case WS_CBIO_ERR_CONN_CLOSE:     /* peer closed connection */
+                ssh->isClosed = 1;
+                ssh->error = WS_SOCKET_ERROR_E;
+                ret = WS_ERROR;
+                break;
+
+            case WS_CBIO_ERR_TIMEOUT:
+                ssh->error = WS_SOCKET_ERROR_E;
+                ret = WS_ERROR;
+                break;
+
+            default:
+                /* recv ready */
+                ssh->error = WS_CHAN_RXD;
+                break;
+        }
+    }
+
+    return ret;
+}
 
 
 int DoReceive(WOLFSSH* ssh)
