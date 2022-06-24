@@ -384,6 +384,9 @@ const char* GetErrorString(int err)
         case WS_SFTP_BAD_HEADER:
             return "sftp bad header";
 
+        case WS_DISCONNECTED:
+            return "peer disconnected";
+
         default:
             return "Unknown error code";
     }
@@ -3903,7 +3906,8 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
     *idx = begin;
 
-    return WS_SUCCESS;
+    ssh->error = WS_DISCONNECTED;
+    return WS_ERROR;
 }
 
 
