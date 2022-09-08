@@ -260,6 +260,7 @@ WOLFSSH_API int wolfSSH_SendDisconnect(WOLFSSH*, word32);
 WOLFSSH_API int wolfSSH_global_request(WOLFSSH*, const unsigned char*, word32, int);
 WOLFSSH_API int wolfSSH_ChannelIdRead(WOLFSSH*, word32, byte*, word32);
 WOLFSSH_API int wolfSSH_ChannelIdSend(WOLFSSH*, word32, byte*, word32);
+WOLFSSH_API int wolfSSH_ChannelIdPeek(WOLFSSH*, word32, word32*);
 
 WOLFSSH_API void wolfSSH_GetStats(WOLFSSH*,
                                   word32*, word32*, word32*, word32*);

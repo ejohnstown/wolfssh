@@ -2129,6 +2129,26 @@ static int _UpdateChannelWindow(WOLFSSH_CHANNEL* channel)
 }
 
 
+int wolfSSH_ChannelIdPeek(WOLFSSH* ssh, word32 channelId, word32* rxd)
+{
+    WOLFSSH_CHANNEL* channel = NULL;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelIdPeek()");
+
+    if (ssh == NULL || rxd == NULL)
+        return WS_BAD_ARGUMENT;
+
+    channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
+    if (channel == NULL)
+        return WS_INVALID_CHANID;
+
+    *rxd = channel->inputBuffer.length;
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdPeek(), rxd = %d", *rxd);
+    return WS_SUCCESS;
+}
+
+
 static int _ChannelRead(WOLFSSH_CHANNEL* channel, byte* buf, word32 bufSz)
 {
     Buffer* inputBuffer;

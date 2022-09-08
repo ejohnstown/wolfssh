@@ -505,6 +505,13 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
     while (buffer->idx < buffer->sz && (ret > 0 || ret == WS_SUCCESS)) {
         ret = wolfSSH_stream_send(ssh, buffer->data + buffer->idx,
             buffer->sz - buffer->idx);
+        if (ret == WS_WINDOW_FULL || ret == WS_REKEYING) {
+            do {
+                ret = wolfSSH_worker(ssh, NULL);
+            } while (ret == WS_CHAN_RXD);
+            if (ret == WS_SUCCESS)
+                continue; /* skip past increment and send more */
+        }
         if (ret > 0) {
             buffer->idx += ret;
         }
@@ -4519,7 +4526,7 @@ static int SFTP_GetAttributes_Handle(WOLFSSH* ssh, byte* handle, int handleSz,
 
 #elif defined(WOLFSSH_USER_FILESYSTEM)
     /* User-defined I/O support */
-    
+
 #else
 
 /* @TODO can be overriden by user for portability
