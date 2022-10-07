@@ -156,6 +156,11 @@ AC_ARG_ENABLE([examples],
     [AS_HELP_STRING([--disable-examples],[Disable examples (default: enabled)])],
     [ENABLED_EXAMPLES=$enableval],[ENABLED_EXAMPLES=yes])
 
+# Logging
+AC_ARG_ENABLE([logging],
+    [AS_HELP_STRING([--disable-logging],[Disable logging (default: enabled)])],
+    [ENABLED_LOGGING=$enableval],[ENABLED_LOGGING=yes])
+
 # Key Generation
 AC_ARG_ENABLE([keygen],
     [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
@@ -233,6 +238,10 @@ AS_IF([test "x$ENABLED_SSHD" = "xyes"],
 # Set the defined flags for the code.
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
+AS_IF([test "x$ENABLED_LOGGING" = "xno" && test "x$ax_enable_debug" = "xyes"],
+      [ENABLED_LOGGING="yes"; AS_ECHO(["Debugging enabled, forcing logging back on."])])
+AS_IF([test "x$ENABLED_LOGGING" = "xno"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_NO_LOGGING"])
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
 AS_IF([test "x$ENABLED_SCP" = "xyes"],
@@ -339,6 +348,7 @@ AS_ECHO
 AS_ECHO(["   Features"])
 AS_ECHO(["   * Inline Code:               $ENABLED_INLINE"])
 AS_ECHO(["   * Small stack:               $ENABLED_SMALLSTACK"])
+AS_ECHO(["   * logging:                   $ENABLED_LOGGING"])
 AS_ECHO(["   * keygen:                    $ENABLED_KEYGEN"])
 AS_ECHO(["   * psuedo-terminal:           $ENABLED_PTERM"])
 AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
