@@ -44,6 +44,7 @@
 #include <wolfssl/wolfcrypt/hmac.h>
 #include <wolfssl/wolfcrypt/integer.h>
 #include <wolfssl/wolfcrypt/signature.h>
+#include <wolfssl/wolfcrypt/kdf.h>
 
 #ifdef WOLFSSH_HAVE_LIBOQS
 #include <oqs/kem.h>
@@ -1128,11 +1129,12 @@ int wolfSSH_ProcessBuffer(WOLFSSH_CTX* ctx,
 }
 
 
-int GenerateKey(byte hashId, byte keyId,
-                byte* key, word32 keySz,
-                const byte* k, word32 kSz,
-                const byte* h, word32 hSz,
-                const byte* sessionId, word32 sessionIdSz)
+#ifndef HAVE_WC_SSH_KDF
+
+static
+int wc_SSH_KDF(byte hashId, byte keyId, byte* key, word32 keySz,
+        const byte* k, word32 kSz, const byte* h, word32 hSz,
+        const byte* sessionId, word32 sessionIdSz)
 {
     word32 blocks, remainder;
     wc_HashAlg hash;
@@ -1143,12 +1145,13 @@ int GenerateKey(byte hashId, byte keyId,
     int digestSz;
     int ret;
 
+    WLOG(WS_LOG_DEBUG, "Entering wc_SSH_KDF()");
+
     if (key == NULL || keySz == 0 ||
         k == NULL || kSz == 0 ||
         h == NULL || hSz == 0 ||
         sessionId == NULL || sessionIdSz == 0) {
 
-        WLOG(WS_LOG_DEBUG, "GK: bad argument");
         return WS_BAD_ARGUMENT;
     }
 
@@ -1241,6 +1244,8 @@ int GenerateKey(byte hashId, byte keyId,
     return ret;
 }
 
+#endif /* HAVE_EC_SSH_KDF */
+
 
 static int GenerateKeys(WOLFSSH* ssh, byte hashId)
 {
@@ -1262,36 +1267,30 @@ static int GenerateKeys(WOLFSSH* ssh, byte hashId)
     }
 
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(hashId, 'A',
-                          cK->iv, cK->ivSz,
-                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
+        ret = wc_SSH_KDF(hashId, 'A', cK->iv, cK->ivSz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(hashId, 'B',
-                          sK->iv, sK->ivSz,
-                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
+        ret = wc_SSH_KDF(hashId, 'B', sK->iv, sK->ivSz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(hashId, 'C',
-                          cK->encKey, cK->encKeySz,
-                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
+        ret = wc_SSH_KDF(hashId, 'C', cK->encKey, cK->encKeySz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS)
-        ret = GenerateKey(hashId, 'D',
-                          sK->encKey, sK->encKeySz,
-                          ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                          ssh->sessionId, ssh->sessionIdSz);
+        ret = wc_SSH_KDF(hashId, 'D', sK->encKey, sK->encKeySz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
     if (ret == WS_SUCCESS) {
         if (!ssh->handshake->aeadMode) {
-            ret = GenerateKey(hashId, 'E',
-                              cK->macKey, cK->macKeySz,
-                              ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                              ssh->sessionId, ssh->sessionIdSz);
+            ret = wc_SSH_KDF(hashId, 'E', cK->macKey, cK->macKeySz,
+                ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                ssh->sessionId, ssh->sessionIdSz);
             if (ret == WS_SUCCESS) {
-                ret = GenerateKey(hashId, 'F',
-                                  sK->macKey, sK->macKeySz,
-                                  ssh->k, ssh->kSz, ssh->h, ssh->hSz,
-                                  ssh->sessionId, ssh->sessionIdSz);
+                ret = wc_SSH_KDF(hashId, 'F', sK->macKey, sK->macKeySz,
+                        ssh->k, ssh->kSz, ssh->h, ssh->hSz,
+                        ssh->sessionId, ssh->sessionIdSz);
             }
         }
     }

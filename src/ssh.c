@@ -34,6 +34,7 @@
 #include <wolfssl/wolfcrypt/wc_port.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
 #include <wolfssl/wolfcrypt/random.h>
+#include <wolfssl/wolfcrypt/kdf.h>
 
 #ifdef NO_INLINE
     #include <wolfssh/misc.h>
@@ -1750,7 +1751,7 @@ int wolfSSH_KDF(byte hashId, byte keyId,
                 const byte* sessionId, word32 sessionIdSz)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_KDF()");
-    return GenerateKey(hashId, keyId, key, keySz, k, kSz, h, hSz,
+    return wc_SSH_KDF(hashId, keyId, key, keySz, k, kSz, h, hSz,
                        sessionId, sessionIdSz);
 }
 
