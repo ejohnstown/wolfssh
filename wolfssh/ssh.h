@@ -338,6 +338,13 @@ enum WS_DisconnectReasonCodes {
     WOLFSSH_DISCONNECT_ILLEGAL_USER_NAME              = 15
 };
 
+enum WS_ChannelOpenFailureCodes {
+    WOLFSSH_CHANOPENFAIL_ADMIN_PROHIBIT = 1,
+    WOLFSSH_CHANOPENFAIL_CONNECT_FAILED = 2,
+    WOLFSSH_CHANOPENFAIL_UNKNOWN_TYPE   = 3,
+    WOLFSSH_CHANOPENFAIL_RESOURCE       = 4
+};
+
 
 WOLFSSH_API int wolfSSH_RealPath(const char* defaultPath, char* in,
         char* out, word32 outSz);

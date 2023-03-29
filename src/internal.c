@@ -6108,6 +6108,12 @@ static int DoChannelOpen(WOLFSSH* ssh,
         typeId = NameToId(type, typeSz);
         switch (typeId) {
             case ID_CHANTYPE_SESSION:
+            #ifdef WOLFSSH_SFTP
+                /* If SFTP is already running, don't allow another channel. */
+                if (ssh->channelListSz >= 1 && ssh->sftpState != SFTP_BEGIN) {
+                    ret = WS_INVALID_CHANID;
+                }
+            #endif
                 break;
         #ifdef WOLFSSH_FWD
             case ID_CHANTYPE_TCPIP_DIRECT:
@@ -6166,8 +6172,28 @@ static int DoChannelOpen(WOLFSSH* ssh,
         }
     }
 
-    if (ret == WS_SUCCESS)
+    if (ret == WS_SUCCESS) {
         ret = SendChannelOpenConf(ssh, newChannel);
+    }
+    else {
+        word32 reason;
+        const char *desc;
+
+        if (ret == WS_INVALID_CHANTYPE) {
+            reason = WOLFSSH_CHANOPENFAIL_UNKNOWN_TYPE;
+            desc = "Channel type not supported.";
+        }
+        else if (ret == WS_INVALID_CHANID) {
+            reason = WOLFSSH_CHANOPENFAIL_ADMIN_PROHIBIT;
+            desc = "Each session cannot have more than one channel open.";
+        }
+        else {
+            reason = WOLFSSH_CHANOPENFAIL_RESOURCE;
+            desc = "Not enough resources.";
+        }
+
+        ret = SendChannelOpenFail(ssh, peerChannelId, reason, desc, "en");
+    }
 
 #ifdef WOLFSSH_FWD
     /* ChannelUpdateForward makes new host and origin buffer */
@@ -11637,6 +11663,74 @@ int SendChannelOpenConf(WOLFSSH* ssh, WOLFSSH_CHANNEL* channel)
     return ret;
 }
 
+int SendChannelOpenFail(WOLFSSH* ssh, word32 channelId,
+        word32 reason, const char* desc, const char* lang)
+{
+    byte* output;
+    word32 idx;
+    word32 descSz = 0;
+    word32 langSz = 0;
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering SendChannelOpenFail()");
+
+    if (ssh == NULL) {
+        ret = WS_BAD_ARGUMENT;
+    }
+
+    if (ret == WS_SUCCESS) {
+        WLOG(WS_LOG_INFO, "  channelId = %u", channelId);
+        WLOG(WS_LOG_INFO, "  reason = %u", reason);
+        WLOG(WS_LOG_INFO, "  description = %s", desc);
+        WLOG(WS_LOG_INFO, "  language = %s", lang);
+    }
+
+    if (ret == WS_SUCCESS) {
+        if (desc != NULL) {
+            descSz = (word32)WSTRLEN(desc);
+        }
+        if (lang != NULL) {
+            langSz = (word32)WSTRLEN(lang);
+        }
+
+        ret = PreparePacket(ssh, MSG_ID_SZ + UINT32_SZ * 2 + LENGTH_SZ * 2 +
+                descSz + langSz);
+    }
+
+    if (ret == WS_SUCCESS) {
+        output = ssh->outputBuffer.buffer;
+        idx = ssh->outputBuffer.length;
+
+        output[idx++] = MSGID_CHANNEL_OPEN_FAIL;
+        c32toa(channelId, output + idx);
+        idx += UINT32_SZ;
+        c32toa(reason, output + idx);
+        idx += UINT32_SZ;
+        c32toa(descSz, output + idx);
+        idx += UINT32_SZ;
+        if (descSz > 0) {
+            WMEMCPY(output + idx, desc, descSz);
+            idx += descSz;
+        }
+        c32toa(langSz, output + idx);
+        idx += UINT32_SZ;
+        if (langSz > 0) {
+            WMEMCPY(output + idx, lang, langSz);
+            idx += langSz;
+        }
+
+        ssh->outputBuffer.length = idx;
+
+        ret = BundlePacket(ssh);
+    }
+
+    if (ret == WS_SUCCESS) {
+        ret = wolfSSH_SendPacket(ssh);
+    }
+
+    WLOG(WS_LOG_DEBUG, "Leaving SendChannelOpenFail(), ret = %d", ret);
+    return ret;
+}
 
 int SendChannelEof(WOLFSSH* ssh, word32 peerChannelId)
 {
