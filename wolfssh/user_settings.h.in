@@ -1,0 +1,34 @@
+#ifndef _WOLFSSH_USER_SETTINGS_H_
+#define _WOLFSSH_USER_SETTINGS_H_
+
+/* Enable SSH-AGENT */
+#undef WOLFSSH_AGENT
+
+/* Enable certificate support */
+#undef WOLFSSH_CERTS
+
+/* Enable port forwarding */
+#undef WOLFSSH_FWD
+
+/* Enable the keygen functions */
+#undef WOLFSSH_KEYGEN
+
+/* Enable pseudoterminal */
+#undef WOLFSSH_PTERM
+
+/* Enable SCP */
+#undef WOLFSSH_SCP
+
+/* Enable SFTP */
+#undef WOLFSSH_SFTP
+
+/* Enable shell support */
+#undef WOLFSSH_SHELL
+
+/* Build for small stack */
+#undef WOLFSSH_SMALLSTACK
+
+/* Enable sshd server */
+#undef WOLFSSH_SSHD
+
+#endif /* _WOLFSSH_USER_SETTINGS_H_ */

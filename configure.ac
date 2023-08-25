@@ -7,8 +7,6 @@ AC_INIT([wolfssh],[1.4.14],[support@wolfssl.com],[wolfssh],[https://www.wolfssl.
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
-: ${CFLAGS=""}
-
 AC_CANONICAL_HOST
 AC_CANONICAL_TARGET
 
@@ -16,7 +14,7 @@ AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-o
 
 AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
-AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_HEADERS([config.h:config.h.in wolfssh/user_settings.h])
 
 WOLFSSH_LIBRARY_VERSION=15:1:7
 #                       | | |
@@ -35,9 +33,6 @@ AC_SUBST([WOLFSSH_LIBRARY_VERSION])
 LT_PREREQ([2.2])
 LT_INIT([disable-static win32-dll])
 
-gl_VISIBILITY
-AS_IF([test -n "$CFLAG_VISIBILITY"],[AM_CFLAGS="$AM_CFLAGS $CFLAG_VISIBILITY"])
-
 # silent
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
@@ -45,6 +40,9 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_INSTALL
+
+gl_VISIBILITY
+WOLFSSH_CFLAGS="$CFLAG_VISIBILITY"
 
 # Checks for type sizes.
 AC_CHECK_SIZEOF([long long])
@@ -57,44 +55,25 @@ AC_CHECK_LIB([network],[socket])
 AC_CHECK_LIB([util],[forkpty])
 
 # liboqs
-ENABLED_LIBOQS="no"
-tryliboqsdir=""
 AC_ARG_WITH([liboqs],
     [AS_HELP_STRING([--with-liboqs=PATH],[Path to liboqs install (default /usr/local) EXPERIMENTAL!])],
-    [
-        AC_MSG_CHECKING([for liboqs])
-        CPPFLAGS="$CPPFLAGS -DWOLFSSH_HAVE_LIBOQS"
-        LIBS="$LIBS -loqs"
+    [ENABLED_LIBOQS=$withval],[ENABLED_LIBOQS='no'])
 
-        AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <oqs/common.h>]], [[ OQS_init(); ]])], [ liboqs_linked=yes ],[ liboqs_linked=no ])
-
-        if test "x$liboqs_linked" = "xno" ; then
-            if test "x$withval" != "xno" ; then
-                tryliboqsdir=$withval
-            fi
-            if test "x$withval" = "xyes" ; then
-                tryliboqsdir="/usr/local"
-            fi
-
-            LDFLAGS="$AM_LDFLAGS $LDFLAGS -L$tryliboqsdir/lib"
-            CPPFLAGS="$CPPFLAGS -I$tryliboqsdir/include"
-
-            AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <oqs/common.h>]], [[ OQS_init(); ]])], [ liboqs_linked=yes ],[ liboqs_linked=no ])
-
-            if test "x$liboqs_linked" = "xno" ; then
-                AC_MSG_ERROR([liboqs isn't found.
-                If it's already installed, specify its path using --with-liboqs=/dir/])
-            fi
-            AC_MSG_RESULT([yes])
-            AM_LDFLAGS="$AM_LDFLAGS -L$tryliboqsdir/lib"
-        else
-            AC_MSG_RESULT([yes])
-        fi
-
-        AM_CFLAGS="$AM_CFLAGS -DWOLFSSH_HAVE_LIBOQS"
-        ENABLED_LIBOQS="yes"
-    ]
-)
+AS_IF([test $ENABLED_LIBOQS != 'no'],[
+    AS_IF([test $ENABLED_LIBOQS = 'yes'],[OQSPATH='/usr/local'],[OQSPATH="$ENABLED_LIBOQS"])
+    SAVE_LDFLAGS="$LDFLAGS"
+    SAVE_LIBS="$LIBS"
+    LDFLAGS="-L$OQSPATH/lib $LDFLAGS"
+    AC_SEARCH_LIBS([OQS_init],[oqs],
+        [ENABLED_LIBOQS='yes'; AC_DEFINE([WOLFSSH_HAVE_LIBOQS],[1],[Set to 1 for using liboqs])],
+        [AC_MSG_ERROR([liboqs isn't found. If it's already installed, specify its path using --with-liboqs=/dir])]
+    )
+    LDFLAGS="$SAVE_LDFLAGS"
+    LIBS="$SAVE_LIBS"
+    WOLFSSH_LIBS="-loqs $WOLFSSH_LIBS"
+    WOLFSSH_LDFLAGS="-L$OQSPATH/lib $WOLFSSH_LDFLAGS"
+    WOLFSSH_CPPFLAGS="-I$OQSPATH/include $WOLFSSH_CPPFLAGS"
+])
 
 #wolfssl
 AC_MSG_CHECKING([for wolfSSL])
@@ -105,11 +84,10 @@ else
     wcpath=$prefix
 fi
 AC_MSG_NOTICE([prefix ${prefix}])
-WOLFSSL_URL="http://www.wolfssl.com/download.html"
-AC_ARG_WITH(wolfssl,
+AC_ARG_WITH([wolfssl],
   [AS_HELP_STRING([--with-wolfssl=PATH], [PATH to wolfssl install (default /usr/local)])],
   [
-    if test "x$withval" != "xno" ; then
+    if test "$withval" != "no" ; then
       if test -d "${withval}/lib" && test -d "${withval}/include"; then
         wcpath=${withval}
 
@@ -127,15 +105,10 @@ AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket w
 AC_CHECK_DECLS([[pread],[pwrite]],,[unistd.h])
 
 # DEBUG
-DEBUG_CFLAGS="-g -O0"
-DEBUG_CPPFLAGS="-DDEBUG -DDEBUG_WOLFSSH"
-
 AX_DEBUG
-AS_IF([test "x$ax_enable_debug" = "xyes"],
-      [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS"
-       AM_CPPFLAGS="$DEBUG_CPPFLAGS $AM_CPPFLAGS"],
-      [AM_CFLAGS="$AM_CFLAGS -O2"
-       AM_CPPFLAGS="-DNDEBUG $AM_CPPFLAGS"])
+AS_IF([test "$ax_enable_debug" = 'yes'],
+      [AC_DEFINE([DEBUG_WOLFSSH],[1],[Define to '1' for a debug build])
+       WOLFSSH_CFLAGS="-g -O0 $WOLFSSH_CFLAGS"])
 
 AX_PTHREAD([
     AC_DEFINE([HAVE_PTHREAD], [1], [Define if you have POSIX threads libraries and header files.])
@@ -143,14 +116,14 @@ AX_PTHREAD([
     # -Xcompiler libtool will use it. Newer versions of clang don't need
     # the -Q flag when using pthreads.
     AS_CASE([$PTHREAD_CFLAGS],[-Qunused-arguments*],[PTHREAD_CFLAGS="-Xcompiler $PTHREAD_CFLAGS"])
-    AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
+    WOLFSSH_CFLAGS="$WOLFSSH_CFLAGS $PTHREAD_CFLAGS"])
 
 AX_AM_JOBSERVER([yes])
 
 # Inline Build
 AC_ARG_ENABLE([inline],
     [AS_HELP_STRING([--disable-inline],[Disable inline functions (default: enabled)])],
-    [ENABLED_INLINE=$enableval],[ENABLED_INLINE=yes])
+    [ENABLED_INLINE="$enableval"],[ENABLED_INLINE='yes'])
 
 # Examples Build
 AC_ARG_ENABLE([examples],
@@ -221,39 +194,27 @@ AC_ARG_ENABLE([all],
 # Distro build
 AC_ARG_ENABLE([distro],
     [AS_HELP_STRING([--enable-distro],[Enable wolfSSH distro build (default: disabled)])],
-    [ENABLED_DISTRO=$enableval],[ENABLED_DISTRO=no])
+    [ENABLED_DISTRO="$enableval"],[ENABLED_DISTRO='no'])
 
 # Update the ENABLED flags for options that affect other options.
-AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
-      [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
-AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_CERTS=yes])
-AS_IF([test "x$ENABLED_SSHD" = "xyes"],
-      [ENABLED_SHELL=yes])
+AS_IF([test "$ENABLED_DISTRO" = 'yes'],[ENABLED_ALL='yes'; enable_shared='yes'; enable_static='yes'])
+AS_IF([test "$ENABLED_ALL" = 'yes'],[ENABLED_KEYGEN='yes'; ENABLED_SCP='yes'; ENABLED_SFTP='yes'; ENABLED_FWD='yes'; ENABLED_SHELL='yes'; ENABLED_AGENT='yes'; ENABLED_SSHD='yes'; ENABLED_CERTS='yes'])
+AS_IF([test "$ENABLED_SSHD" = 'yes'],[ENABLED_SHELL='yes'])
 
 # Set the defined flags for the code.
-AS_IF([test "x$ENABLED_INLINE" = "xno"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
-AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
-AS_IF([test "x$ENABLED_SCP" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SCP"])
-AS_IF([test "x$ENABLED_SFTP" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SFTP"])
-AS_IF([test "x$ENABLED_FWD" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_FWD"])
-AS_IF([test "x$ENABLED_PTERM" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_TERM"])
-AS_IF([test "x$ENABLED_SHELL" = "xyes"],
-      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SHELL"])
-AS_IF([test "x$ENABLED_AGENT" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_AGENT"])
-AS_IF([test "x$ENABLED_CERTS" = "xyes"],[AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_CERTS"])
-AS_IF([test "x$ENABLED_SMALLSTACK" = "xyes"],
-       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SMALL_STACK"])
-AS_IF([test "x$ENABLED_SSHD" = "xyes"],
-       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_SSHD"])
+AS_IF([test "$ENABLED_INLINE" = 'no'],[AC_DEFINE([NO_INLINE],[1],[Define to turn off inline functions])])
+AS_IF([test "$ENABLED_KEYGEN" = 'yes'],[AC_DEFINE(WOLFSSH_KEYGEN,[1],[Define to enable the keygen functions])])
+AS_IF([test "$ENABLED_SCP" = 'yes'],[AC_DEFINE(WOLFSSH_SCP,[1],[Define to enable SCP])])
+AS_IF([test "$ENABLED_SFTP" = 'yes'],[AC_DEFINE(WOLFSSH_SFTP,[1],[Define to enable SFTP])])
+AS_IF([test "$ENABLED_FWD" = 'yes'],[AC_DEFINE(WOLFSSH_FWD,[1],[Define to enable port forwarding])])
+AS_IF([test "$ENABLED_PTERM" = 'yes'],[AC_DEFINE(WOLFSSH_PTERM,[1],[Define to enable pseudoterminal])])
+AS_IF([test "$ENABLED_SHELL" = 'yes'],[AC_DEFINE(WOLFSSH_SHELL,[1],[Define to enable shell support])])
+AS_IF([test "$ENABLED_AGENT" = 'yes'],[AC_DEFINE(WOLFSSH_AGENT,[1],[Define to enable SSH-AGENT])])
+AS_IF([test "$ENABLED_CERTS" = 'yes'],[AC_DEFINE(WOLFSSH_CERTS,[1],[Define to enable certificate support])])
+AS_IF([test "$ENABLED_SMALLSTACK" = 'yes'],[AC_DEFINE(WOLFSSH_SMALLSTACK,[1],[Define to build for small stack])])
+AS_IF([test "$ENABLED_SSHD" = 'yes'],[AC_DEFINE(WOLFSSH_SSHD,[1],[Define to enable sshd server])])
 
-if test "$ENABLED_SSHD" = "yes"; then
+if test "$ENABLED_SSHD" = 'yes'; then
     if test -n "$PAM_LIB"
     then
         AC_MSG_CHECKING([for directory $PAM_LIB])
@@ -309,6 +270,9 @@ AM_CONDITIONAL([BUILD_CERTS],[test "x$ENABLED_CERTS" = "xyes"])
 AX_HARDEN_CC_COMPILER_FLAGS
 
 CREATE_HEX_VERSION
+AC_SUBST([WOLFSSH_CFLAGS])
+AC_SUBST([WOLFSSH_CPPFLAGS])
+AC_SUBST([WOLFSSH_LDFLAGS])
 AC_SUBST([AM_CPPFLAGS])
 AC_SUBST([AM_CFLAGS])
 AC_SUBST([AM_LDFLAGS])
