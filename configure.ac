@@ -203,16 +203,16 @@ AS_IF([test "$ENABLED_SSHD" = 'yes'],[ENABLED_SHELL='yes'])
 
 # Set the defined flags for the code.
 AS_IF([test "$ENABLED_INLINE" = 'no'],[AC_DEFINE([NO_INLINE],[1],[Define to turn off inline functions])])
-AS_IF([test "$ENABLED_KEYGEN" = 'yes'],[AC_DEFINE(WOLFSSH_KEYGEN,[1],[Define to enable the keygen functions])])
-AS_IF([test "$ENABLED_SCP" = 'yes'],[AC_DEFINE(WOLFSSH_SCP,[1],[Define to enable SCP])])
-AS_IF([test "$ENABLED_SFTP" = 'yes'],[AC_DEFINE(WOLFSSH_SFTP,[1],[Define to enable SFTP])])
-AS_IF([test "$ENABLED_FWD" = 'yes'],[AC_DEFINE(WOLFSSH_FWD,[1],[Define to enable port forwarding])])
-AS_IF([test "$ENABLED_PTERM" = 'yes'],[AC_DEFINE(WOLFSSH_PTERM,[1],[Define to enable pseudoterminal])])
-AS_IF([test "$ENABLED_SHELL" = 'yes'],[AC_DEFINE(WOLFSSH_SHELL,[1],[Define to enable shell support])])
-AS_IF([test "$ENABLED_AGENT" = 'yes'],[AC_DEFINE(WOLFSSH_AGENT,[1],[Define to enable SSH-AGENT])])
-AS_IF([test "$ENABLED_CERTS" = 'yes'],[AC_DEFINE(WOLFSSH_CERTS,[1],[Define to enable certificate support])])
-AS_IF([test "$ENABLED_SMALLSTACK" = 'yes'],[AC_DEFINE(WOLFSSH_SMALLSTACK,[1],[Define to build for small stack])])
-AS_IF([test "$ENABLED_SSHD" = 'yes'],[AC_DEFINE(WOLFSSH_SSHD,[1],[Define to enable sshd server])])
+AS_IF([test "$ENABLED_KEYGEN" = 'yes'],[AC_DEFINE([WOLFSSH_KEYGEN],[1],[Define to enable the keygen functions])])
+AS_IF([test "$ENABLED_SCP" = 'yes'],[AC_DEFINE([WOLFSSH_SCP],[1],[Define to enable SCP])])
+AS_IF([test "$ENABLED_SFTP" = 'yes'],[AC_DEFINE([WOLFSSH_SFTP],[1],[Define to enable SFTP])])
+AS_IF([test "$ENABLED_FWD" = 'yes'],[AC_DEFINE([WOLFSSH_FWD],[1],[Define to enable port forwarding])])
+AS_IF([test "$ENABLED_PTERM" = 'yes'],[AC_DEFINE([WOLFSSH_PTERM],[1],[Define to enable pseudoterminal])])
+AS_IF([test "$ENABLED_SHELL" = 'yes'],[AC_DEFINE([WOLFSSH_SHELL],[1],[Define to enable shell support])])
+AS_IF([test "$ENABLED_AGENT" = 'yes'],[AC_DEFINE([WOLFSSH_AGENT],[1],[Define to enable SSH-AGENT])])
+AS_IF([test "$ENABLED_CERTS" = 'yes'],[AC_DEFINE([WOLFSSH_CERTS],[1],[Define to enable certificate support])])
+AS_IF([test "$ENABLED_SMALLSTACK" = 'yes'],[AC_DEFINE([WOLFSSH_SMALLSTACK],[1],[Define to build for small stack])])
+AS_IF([test "$ENABLED_SSHD" = 'yes'],[AC_DEFINE([WOLFSSH_SSHD],[1],[Define to enable sshd server])])
 
 if test "$ENABLED_SSHD" = 'yes'; then
     if test -n "$PAM_LIB"
@@ -254,18 +254,18 @@ fi
 
 
 # Set the automake conditionals.
-AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
-AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
-AM_CONDITIONAL([BUILD_INLINE],[test "x$ENABLED_INLINE" = "xyes"])
-AM_CONDITIONAL([BUILD_KEYGEN],[test "x$ENABLED_KEYGEN" = "xyes"])
-AM_CONDITIONAL([BUILD_SCP],[test "x$ENABLED_SCP" = "xyes"])
-AM_CONDITIONAL([BUILD_SFTP],[test "x$ENABLED_SFTP" = "xyes"])
-AM_CONDITIONAL([BUILD_FWD],[test "x$ENABLED_FWD" = "xyes"])
-AM_CONDITIONAL([BUILD_TERM],[test "x$ENABLED_TERM" = "xyes"])
-AM_CONDITIONAL([BUILD_SHELL],[test "x$ENABLED_SHELL" = "xyes"])
-AM_CONDITIONAL([BUILD_AGENT],[test "x$ENABLED_AGENT" = "xyes"])
-AM_CONDITIONAL([BUILD_SSHD],[test "x$ENABLED_SSHD" = "xyes"])
-AM_CONDITIONAL([BUILD_CERTS],[test "x$ENABLED_CERTS" = "xyes"])
+AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "$ENABLED_EXAMPLES" = 'yes'])
+AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "$ENABLED_EXAMPLES" = 'yes'])
+AM_CONDITIONAL([BUILD_INLINE],[test "$ENABLED_INLINE" = 'yes'])
+AM_CONDITIONAL([BUILD_KEYGEN],[test "$ENABLED_KEYGEN" = 'yes'])
+AM_CONDITIONAL([BUILD_SCP],[test "$ENABLED_SCP" = 'yes'])
+AM_CONDITIONAL([BUILD_SFTP],[test "$ENABLED_SFTP" = 'yes'])
+AM_CONDITIONAL([BUILD_FWD],[test "$ENABLED_FWD" = 'yes'])
+AM_CONDITIONAL([BUILD_TERM],[test "$ENABLED_TERM" = 'yes'])
+AM_CONDITIONAL([BUILD_SHELL],[test "$ENABLED_SHELL" = 'yes'])
+AM_CONDITIONAL([BUILD_AGENT],[test "$ENABLED_AGENT" = 'yes'])
+AM_CONDITIONAL([BUILD_SSHD],[test "$ENABLED_SSHD" = 'yes'])
+AM_CONDITIONAL([BUILD_CERTS],[test "$ENABLED_CERTS" = 'yes'])
 
 AX_HARDEN_CC_COMPILER_FLAGS
 
