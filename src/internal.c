@@ -80,6 +80,9 @@ Flags:
   WOLFSSH_NO_DH_GROUP14_SHA1
     Set when DH or SHA1 are disabled. Set to disable use of DH (Oakley 14) and
     SHA1 support.
+  WOLFSSH_NO_DH_GROUP14_SHA2_256
+    Set when DH or SHA2-256 are disabled. Set to disable use of DH (Oakley 14)
+    and SHA2-256 support.
   WOLFSSH_NO_DH_GEX_SHA256
     Set when DH or SHA2-256 are disabled. Set to disable use of DH group
     exchange and SHA2-256 support.
@@ -1641,8 +1644,8 @@ static const NameIdPair NameIdMap[] = {
     { ID_ECDH_SHA2_ED25519, "curve25519-sha256" },
     { ID_ECDH_SHA2_ED25519_LIBSSH, "curve25519-sha256@libssh.org" },
 #endif
-#ifndef WOLFSSH_NO_DH_GEX_SHA256
-    { ID_DH_GROUP14_SHA256, "diffie-hellman-group14-sha256" },
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA2_256
+    { ID_DH_GROUP14_SHA2_256, "diffie-hellman-group14-sha256" },
 #endif
 #ifndef WOLFSSH_NO_ECDH_NISTP256_KYBER_LEVEL1_SHA256
     /* We use kyber-512 here to achieve interop with OQS's fork. */
@@ -2695,6 +2698,9 @@ static const byte cannedKexAlgo[] = {
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
     ID_DH_GEX_SHA256,
 #endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA2_256
+    ID_DH_GROUP14_SHA2_256,
+#endif
 #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
     ID_DH_GROUP14_SHA1,
 #endif
@@ -2860,6 +2866,10 @@ static INLINE enum wc_HashType HashForId(byte id)
         /* SHA2-256 */
 #ifndef WOLFSSH_NO_DH_GEX_SHA256
         case ID_DH_GEX_SHA256:
+            return WC_HASH_TYPE_SHA256;
+#endif
+#ifndef WOLFSSH_NO_DH_GROUP14_SHA2_256
+        case ID_DH_GROUP14_SHA2_256:
             return WC_HASH_TYPE_SHA256;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
@@ -3410,6 +3420,7 @@ static const word32 dhPrimeGroup1Sz = (word32)sizeof(dhPrimeGroup1);
 #endif
 
 #if !defined(WOLFSSH_NO_DH_GROUP14_SHA1) || \
+    !defined(WOLFSSH_NO_DH_GROUP14_SHA2_256) || \
     !defined(WOLFSSH_NO_DH_GEX_SHA256)
 static const byte dhPrimeGroup14[] = {
     /* SSH DH Group 14 (Oakley Group 14, 2048-bit MODP Group, RFC 3526) */
@@ -8652,6 +8663,14 @@ static int GetDHPrimeGroup(int kexId, const byte** primeGroup,
         #endif
         #ifndef WOLFSSH_NO_DH_GROUP14_SHA1
         case ID_DH_GROUP14_SHA1:
+            *primeGroup = dhPrimeGroup14;
+            *primeGroupSz = dhPrimeGroup14Sz;
+            *generator = dhGenerator;
+            *generatorSz = dhGeneratorSz;
+            break;
+        #endif
+        #ifndef WOLFSSH_NO_DH_GROUP14_SHA2_256
+        case ID_DH_GROUP14_SHA2_256:
             *primeGroup = dhPrimeGroup14;
             *primeGroupSz = dhPrimeGroup14Sz;
             *generator = dhGenerator;
