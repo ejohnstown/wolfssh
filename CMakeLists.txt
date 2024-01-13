@@ -22,6 +22,7 @@ add_library(wolfssh-obj OBJECT
   wolfssh/version.h
   wolfssh/visibility.h
 )
+set_target_properties(wolfssh-obj PROPERTIES POSITION_INDEPENDENT_CODE 1)
 target_include_directories(wolfssh-obj PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 )
