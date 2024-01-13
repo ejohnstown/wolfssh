@@ -1,5 +1,7 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
+
 project(wolfssh VERSION 1.4.15 LANGUAGES C)
+
 add_library(wolfssh-obj OBJECT
   src/agent.c wolfssh/agent.h
   src/certman.c wolfssh/certman.h
@@ -20,8 +22,12 @@ add_library(wolfssh-obj OBJECT
   wolfssh/version.h
   wolfssh/visibility.h
 )
-set_target_properties(wolfssh-obj PROPERTIES POSITION_INDEPENDENT_CODE 1)
+target_include_directories(wolfssh-obj PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+)
+
 add_library(wolfssh-shared SHARED $<TARGET_OBJECTS:wolfssh-obj>)
 set_target_properties(wolfssh-shared PROPERTIES OUTPUT_NAME "wolfssh")
+
 add_library(wolfssh-static STATIC $<TARGET_OBJECTS:wolfssh-obj>)
 set_target_properties(wolfssh-static PROPERTIES OUTPUT_NAME "wolfssh")
