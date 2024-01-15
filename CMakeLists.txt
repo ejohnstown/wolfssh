@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 project(wolfssh VERSION 1.4.15 LANGUAGES C)
 
+find_package(PkgConfig REQUIRED QUIET)
+
+pkg_search_module(wolfSSL REQUIRED IMPORTED_TARGET wolfssl)
+if(TARGET PkgConfig::wolfSSL)
+  message(STATUS "Found wolfssl")
+endif()
+
 add_library(wolfssh-obj OBJECT
   src/agent.c wolfssh/agent.h
   src/certman.c wolfssh/certman.h
