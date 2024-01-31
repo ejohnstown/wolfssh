@@ -14144,7 +14144,7 @@ int SendChannelSuccess(WOLFSSH* ssh, word32 channelId, int success)
 
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
-    !defined(NO_WOLFSSH_SERVER)
+    !defined(WOLFSSH_NO_SERVER)
 /* cleans up absolute path
  * returns size of new path on success (strlen sz) and negative values on fail*/
 int wolfSSH_CleanPath(WOLFSSH* ssh, char* in)

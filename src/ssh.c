@@ -398,7 +398,7 @@ const char* wolfSSH_ErrorToName(int err)
 }
 
 
-#ifndef NO_WOLFSSH_SERVER
+#ifndef WOLFSSH_NO_SERVER
 
 const char acceptError[] = "accept error: %s, %d";
 const char acceptState[] = "accept state: %s";
@@ -573,7 +573,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                     return WS_SCP_INIT;
                 }
 #endif
-#if defined(WOLFSSH_SFTP) && !defined(NO_WOLFSSH_SERVER)
+#if defined(WOLFSSH_SFTP) && !defined(WOLFSSH_NO_SERVER)
                 {
                     const char* cmd = wolfSSH_GetSessionCommand(ssh);
                     if (cmd != NULL &&
@@ -583,7 +583,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                         return wolfSSH_SFTP_accept(ssh);
                     }
                 }
-#endif /* WOLFSSH_SFTP and !NO_WOLFSSH_SERVER */
+#endif /* WOLFSSH_SFTP and !WOLFSSH_NO_SERVER */
 #ifdef WOLFSSH_AGENT
                 if (ssh->useAgent) {
                     WOLFSSH_AGENT_CTX* newAgent;
@@ -658,10 +658,10 @@ int wolfSSH_accept(WOLFSSH* ssh)
     return WS_SUCCESS;
 }
 
-#endif /* NO_WOLFSSH_SERVER */
+#endif /* WOLFSSH_NO_SERVER */
 
 
-#ifndef NO_WOLFSSH_CLIENT
+#ifndef WOLFSSH_NO_CLIENT
 
 const char connectError[] = "connect error: %s, %d";
 const char connectState[] = "connect state: %s";
@@ -948,7 +948,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
     return WS_SUCCESS;
 }
 
-#endif /* NO_WOLFSSH_CLIENT */
+#endif /* WOLFSSH_NO_CLIENT */
 
 
 int wolfSSH_shutdown(WOLFSSH* ssh)
@@ -2547,7 +2547,7 @@ int wolfSSH_ChannelGetEof(WOLFSSH_CHANNEL* channel)
 
 
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
-    !defined(NO_WOLFSSH_SERVER)
+    !defined(WOLFSSH_NO_SERVER)
 
 #define DELIM "/\\"
 #define IS_DELIM(x) ((x) == '/' || (x) == '\\')

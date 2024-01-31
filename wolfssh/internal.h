@@ -82,6 +82,23 @@ extern "C" {
 
 
 /*
+ * The following are flags to disable the client and server support code from
+ * the library. The new convention is that all flags start with WOLFSSH to
+ * act as a namespace. If the old name is used, set the new name.
+ */
+
+#ifdef NO_WOLFSSH_SERVER
+    #undef WOLFSSH_NO_SERVER
+    #define WOLFSSH_NO_SERVER
+#endif
+
+#ifdef NO_WOLFSSH_CLIENT
+    #undef WOLFSSH_NO_CLIENT
+    #define WOLFSSH_NO_CLIENT
+#endif
+
+
+/*
  * Check options set by wolfSSL and set wolfSSH options as appropriate. If
  * the derived options and any override options leave wolfSSH without
  * at least one algorithm to use, throw an error.
