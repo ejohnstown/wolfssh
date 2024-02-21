@@ -2754,7 +2754,8 @@ WOLFSSH_CHANNEL* wolfSSH_ChannelFwdNewRemote(WOLFSSH* ssh,
     if (newChannel != NULL)
         ChannelAppend(ssh, newChannel);
 
-    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
+    WLOG(WS_LOG_DEBUG,
+            "Leaving wolfSSH_ChannelFwdNewRemote(), newChannel = %p, ret = %d",
             newChannel, ret);
     return newChannel;
 }
