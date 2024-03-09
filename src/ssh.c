@@ -3042,6 +3042,18 @@ void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh)
 }
 
 
+const char* wolfSSH_GetChannelType(WOLFSSH_CHANNEL* channel)
+{
+    const char* name = NULL;
+
+    if (channel != NULL) {
+        name = IdToName(channel->channelType);
+    }
+
+    return name;
+}
+
+
 #if (defined(WOLFSSH_SFTP) || defined(WOLFSSH_SCP)) && \
     !defined(NO_WOLFSSH_SERVER)
 
