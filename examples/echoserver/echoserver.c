@@ -123,7 +123,7 @@ static int quit = 0;
 wolfSSL_Mutex doneLock;
 #define MAX_PASSWD_RETRY 3
 static int passwdRetry = MAX_PASSWD_RETRY;
-int ChildRunning = 0;
+volatile sig_atomic_t ChildRunning = 0;
 
 
 #ifndef EXAMPLE_HIGHWATER_MARK
@@ -139,72 +139,65 @@ int ChildRunning = 0;
 #endif
 
 
+typedef enum WS_AppState {
+    APP_STATE_INIT,
+        /* Just started, not doing anything. */
+    APP_STATE_LISTEN,
+        /* Has listen socket open, waiting for client. */
+    APP_STATE_CONNECT,
+        /* SSH client peer is listening. */
+    APP_STATE_CONNECTED,
+        /* Client application connected, processing its data. */
+} WS_AppState;
+
+
+typedef struct WS_AppCtx {
+    WOLFSSH_CHANNEL *channel;
+    void *privateData;
+    WS_SOCKET_T listenFd;
+    WS_SOCKET_T appFd;
+    word32 channelId;
+    WS_AppState state;
+    byte buffer[EXAMPLE_BUFFER_SZ];
+} WS_AppCtx;
+
+
 #ifdef WOLFSSH_AGENT
 typedef struct WS_AgentCbActionCtx {
     struct sockaddr_un name;
-    WS_SOCKET_T listenFd;
-    WS_SOCKET_T fd;
-    pid_t pid;
-    int state;
 } WS_AgentCbActionCtx;
 #endif
 
 
 #ifdef WOLFSSH_FWD
-enum FwdStates {
-    FWD_STATE_INIT,
-    FWD_STATE_LISTEN,
-    FWD_STATE_CONNECT,
-    FWD_STATE_CONNECTED,
-    FWD_STATE_DIRECT,
-    FWD_STATE_DIRECT_CONNECTED,
-};
-
 typedef struct WS_FwdCbActionCtx {
-    void* heap;
     char* hostName;
     char* originName;
     word16 hostPort;
     word16 originPort;
-    WS_SOCKET_T listenFd;
-    WS_SOCKET_T appFd;
-    int error;
-    int state;
     int isDirect;
-    word32 channelId;
 } WS_FwdCbActionCtx;
-#endif
-
-
-#ifdef WOLFSSH_SHELL
-typedef struct WS_ShellCtx {
-    int isConnected;
-    WS_SOCKET_T childFd;
-    word32 channelId;
-} WS_ShellCtx;
 #endif
 
 
 typedef struct {
     WOLFSSH* ssh;
-    WS_SOCKET_T fd;
-    word32 id;
+    word32 tid;
     int echo;
     char nonBlock;
 #if defined(WOLFSSL_PTHREADS) && defined(WOLFSSL_TEST_GLOBAL_REQ)
     WOLFSSH_CTX *ctx;
 #endif
 #ifdef WOLFSSH_AGENT
+    WS_AppCtx agentCtx;
     WS_AgentCbActionCtx agentCbCtx;
-    byte agentBuffer[EXAMPLE_BUFFER_SZ];
 #endif
 #ifdef WOLFSSH_FWD
+    WS_AppCtx fwdCtx;
     WS_FwdCbActionCtx fwdCbCtx;
-    byte fwdBuffer[EXAMPLE_BUFFER_SZ];
 #endif
 #ifdef WOLFSSH_SHELL
-    WS_ShellCtx shellCtx;
-    byte shellBuffer[EXAMPLE_BUFFER_SZ];
+    WS_AppCtx shellCtx;
 #endif
 #ifdef WOLFSSH_SFTP
     int doSftp;
@@ -246,7 +239,7 @@ static int dump_stats(thread_ctx_t* ctx)
             "Statistics for Thread #%u:\r\n"
             "  txCount = %u\r\n  rxCount = %u\r\n"
             "  seq = %u\r\n  peerSeq = %u\r\n",
-            ctx->id, txCount, rxCount, seq, peerSeq);
+            ctx->tid, txCount, rxCount, seq, peerSeq);
     statsSz = (word32)WSTRLEN(ctx->statsBuffer);
 
     fprintf(stderr, "%s", ctx->statsBuffer);
@@ -353,19 +346,19 @@ static const char EnvNameAuthPort[] = "SSH_AUTH_SOCK";
 
 static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
 {
-    WS_AgentCbActionCtx* ctx = (WS_AgentCbActionCtx*)vCtx;
+    WS_AppCtx *ctx = (WS_AppCtx *)vCtx;
+    WS_AgentCbActionCtx *agentCtx = (WS_AgentCbActionCtx *)ctx->privateData;
     int ret = 0;
 
     if (action == WOLFSSH_AGENT_LOCAL_SETUP) {
-        struct sockaddr_un* name = &ctx->name;
+        struct sockaddr_un* name = &agentCtx->name;
         size_t size;
 
         WMEMSET(name, 0, sizeof(struct sockaddr_un));
-        ctx->pid = getpid();
         name->sun_family = AF_LOCAL;
 
         ret = snprintf(name->sun_path, sizeof(name->sun_path),
-                "/tmp/wolfserver.%d", ctx->pid);
+                "/tmp/wolfserver.%d", (int)getpid());
 
         if (ret == 0) {
             name->sun_path[sizeof(name->sun_path) - 1] = '\0';
@@ -391,7 +384,7 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
         }
 
         if (ret == 0) {
-            ctx->state = AGENT_STATE_LISTEN;
+            ctx->state = APP_STATE_LISTEN;
         }
         else {
             ret = WS_AGENT_SETUP_E;
@@ -399,7 +392,8 @@ static int wolfSSH_AGENT_DefaultActions(WS_AgentCbAction action, void* vCtx)
     }
     else if (action == WOLFSSH_AGENT_LOCAL_CLEANUP) {
         WCLOSESOCKET(ctx->listenFd);
-        unlink(ctx->name.sun_path);
+        ctx->listenFd = -1;
+        unlink(agentCtx->name.sun_path);
         unsetenv(EnvNameAuthPort);
     }
     else
@@ -457,36 +451,38 @@ static WS_SOCKET_T connect_addr(const char* name, word16 port)
 static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         const char* name, word32 port)
 {
-    WS_FwdCbActionCtx* ctx = (WS_FwdCbActionCtx*)vCtx;
+    WS_AppCtx *appCtx = (WS_AppCtx *)vCtx;
+    WS_FwdCbActionCtx* fwdCbCtx = (WS_FwdCbActionCtx *)appCtx->privateData;
     int ret = 0;
 
     if (action == WOLFSSH_FWD_LOCAL_SETUP) {
-        ctx->hostName = WSTRDUP(name, NULL, 0);
-        ctx->hostPort = port;
-        ctx->isDirect = 1;
-        ctx->state = FWD_STATE_DIRECT;
+        fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
+        fwdCbCtx->hostPort = port;
+        fwdCbCtx->isDirect = 1;
+        appCtx->state = APP_STATE_CONNECT;
     }
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
-        WCLOSESOCKET(ctx->appFd);
-        if (ctx->hostName) {
-            WFREE(ctx->hostName, NULL, 0);
-            ctx->hostName = NULL;
+        WCLOSESOCKET(appCtx->appFd);
+        appCtx->appFd = -1;
+        if (fwdCbCtx->hostName) {
+            WFREE(fwdCbCtx->hostName, NULL, 0);
+            fwdCbCtx->hostName = NULL;
         }
-        if (ctx->originName) {
-            WFREE(ctx->originName, NULL, 0);
-            ctx->originName = NULL;
+        if (fwdCbCtx->originName) {
+            WFREE(fwdCbCtx->originName, NULL, 0);
+            fwdCbCtx->originName = NULL;
         }
-        ctx->state = FWD_STATE_INIT;
+        appCtx->state = APP_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_REMOTE_SETUP) {
         struct sockaddr_in addr;
         socklen_t addrSz = 0;
 
-        ctx->hostName = WSTRDUP(name, NULL, 0);
-        ctx->hostPort = port;
+        fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
+        fwdCbCtx->hostPort = port;
 
-        ctx->listenFd = socket(AF_INET, SOCK_STREAM, 0);
-        if (ctx->listenFd == -1) {
+        appCtx->listenFd = socket(AF_INET, SOCK_STREAM, 0);
+        if (appCtx->listenFd == -1) {
             ret = -1;
         }
 
@@ -510,52 +506,53 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         }
 
         if (ret == 0) {
-            ret = bind(ctx->listenFd,
+            ret = bind(appCtx->listenFd,
                     (const struct sockaddr*)&addr, addrSz);
         }
 
         if (ret == 0) {
-            ret = listen(ctx->listenFd, 5);
+            ret = listen(appCtx->listenFd, 5);
         }
 
         if (ret == 0) {
-            ctx->state = FWD_STATE_LISTEN;
+            appCtx->state = APP_STATE_LISTEN;
         }
         else {
-            if (ctx->hostName != NULL) {
-                WFREE(ctx->hostName, NULL, 0);
-                ctx->hostName = NULL;
+            if (fwdCbCtx->hostName != NULL) {
+                WFREE(fwdCbCtx->hostName, NULL, 0);
+                fwdCbCtx->hostName = NULL;
             }
-            if (ctx->listenFd != -1) {
-                WCLOSESOCKET(ctx->listenFd);
-                ctx->listenFd = -1;
+            if (appCtx->listenFd != -1) {
+                WCLOSESOCKET(appCtx->listenFd);
+                appCtx->listenFd = -1;
             }
             ret = WS_FWD_SETUP_E;
         }
     }
     else if (action == WOLFSSH_FWD_REMOTE_CONFIRM) {
-        ctx->state = FWD_STATE_CONNECTED;
+        appCtx->state = APP_STATE_CONNECTED;
     }
     else if (action == WOLFSSH_FWD_REMOTE_CLEANUP) {
-        if (ctx->hostName) {
-            WFREE(ctx->hostName, NULL, 0);
-            ctx->hostName = NULL;
+        if (fwdCbCtx->hostName) {
+            WFREE(fwdCbCtx->hostName, NULL, 0);
+            fwdCbCtx->hostName = NULL;
         }
-        if (ctx->originName) {
-            WFREE(ctx->originName, NULL, 0);
-            ctx->originName = NULL;
+        if (fwdCbCtx->originName) {
+            WFREE(fwdCbCtx->originName, NULL, 0);
+            fwdCbCtx->originName = NULL;
         }
-        if (ctx->listenFd != -1) {
-            WCLOSESOCKET(ctx->listenFd);
-            ctx->listenFd = -1;
+        if (appCtx->listenFd != -1) {
+            WCLOSESOCKET(appCtx->listenFd);
+            appCtx->listenFd = -1;
         }
-        ctx->state = FWD_STATE_INIT;
+        appCtx->state = APP_STATE_INIT;
     }
     else if (action == WOLFSSH_FWD_CHANNEL_ID) {
-        ctx->channelId = port;
+        appCtx->channelId = port;
     }
-    else
+    else {
         ret = WS_FWD_INVALID_ACTION;
+    }
 
     return ret;
 }
@@ -608,7 +605,7 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
 
         threadCtx = (thread_ctx_t*)ctx;
         ssh = threadCtx->ssh;
-        threadCtx->shellCtx.isConnected = 1;
+        threadCtx->shellCtx.state = APP_STATE_CONNECTED;
         wolfSSH_ChannelGetId(channel,
                 &threadCtx->shellCtx.channelId, WS_CHANNEL_ID_PEER);
         userName = wolfSSH_GetUsername(ssh);
@@ -621,7 +618,7 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
             return WS_FATAL_ERROR;
         }
 
-        childPid = forkpty(&threadCtx->shellCtx.childFd, NULL, NULL, NULL);
+        childPid = forkpty(&threadCtx->shellCtx.appFd, NULL, NULL, NULL);
 
         if (childPid < 0) {
             /* forkpty failed, so return */
@@ -653,23 +650,23 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
         #endif
         signal(SIGCHLD, ChildSig);
 
-        rc = tcgetattr(threadCtx->shellCtx.childFd, &tios);
+        rc = tcgetattr(threadCtx->shellCtx.appFd, &tios);
         if (rc != 0) {
             printf("tcgetattr failed: rc =%d,errno=%x\n", rc, errno);
             return WS_FATAL_ERROR;
         }
-        rc = tcsetattr(threadCtx->shellCtx.childFd, TCSAFLUSH, &tios);
+        rc = tcsetattr(threadCtx->shellCtx.appFd, TCSAFLUSH, &tios);
         if (rc != 0) {
             printf("tcsetattr failed: rc =%d,errno=%x\n", rc, errno);
             return WS_FATAL_ERROR;
         }
 
         #ifdef SHELL_DEBUG
-            termios_show(threadCtx->shellCtx.childFd);
+            termios_show(threadCtx->shellCtx.appFd);
         #endif
 
         /* set initial size of terminal based on saved size */
-        wolfSSH_DoModes(ssh->modes, ssh->modesSz, threadCtx->shellCtx.childFd);
+        wolfSSH_DoModes(ssh->modes, ssh->modesSz, threadCtx->shellCtx.appFd);
         #if defined(HAVE_SYS_IOCTL_H)
         {
             struct winsize s = {0};
@@ -679,11 +676,11 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
             s.ws_xpixel = ssh->widthPixels;
             s.ws_ypixel = ssh->heightPixels;
 
-            ioctl(threadCtx->shellCtx.childFd, TIOCSWINSZ, &s);
+            ioctl(threadCtx->shellCtx.appFd, TIOCSWINSZ, &s);
         }
         #endif /* HAVE_SYS_IOCTL_H */
 
-        wolfSSH_SetTerminalResizeCtx(ssh, (void*)&threadCtx->shellCtx.childFd);
+        wolfSSH_SetTerminalResizeCtx(ssh, (void*)&threadCtx->shellCtx.appFd);
     }
 
     return 0;
@@ -789,7 +786,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
         /* Parent process */
 #ifdef WOLFSSH_AGENT
         WS_SOCKET_T agentFd = -1;
-        WS_SOCKET_T agentListenFd = threadCtx->agentCbCtx.listenFd;
+        WS_SOCKET_T agentListenFd = threadCtx->agentCtx.listenFd;
         word32 agentChannelId = -1;
 #endif
 #ifdef WOLFSSH_FWD
@@ -801,7 +798,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
         ChildRunning = 1;
 
         while (ChildRunning) {
-            fd_set readFds, exFds;
+            fd_set readFds;
             WS_SOCKET_T maxFd;
             int cnt_r;
 #if defined(WOLFSSH_SHELL) || defined(WOLFSSH_AGENT) || defined(WOLFSSH_FWD)
@@ -809,52 +806,52 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 #endif
 
             FD_ZERO(&readFds);
-            FD_ZERO(&exFds);
             FD_SET(sshFd, &readFds);
             maxFd = sshFd;
 
             #ifdef WOLFSSH_SHELL
-            if (threadCtx->shellCtx.isConnected) {
-                FD_SET(threadCtx->shellCtx.childFd, &readFds);
-                if (threadCtx->shellCtx.childFd > maxFd)
-                    maxFd = threadCtx->shellCtx.childFd;
+            if (threadCtx->shellCtx.state == APP_STATE_CONNECTED) {
+                FD_SET(threadCtx->shellCtx.appFd, &readFds);
+                if (threadCtx->shellCtx.appFd > maxFd)
+                    maxFd = threadCtx->shellCtx.appFd;
             }
             #endif /* WOLFSSH_SHELL */
             #ifdef WOLFSSH_AGENT
-            if (threadCtx->agentCbCtx.state == AGENT_STATE_LISTEN) {
+            if (threadCtx->agentCtx.state == APP_STATE_LISTEN) {
                 FD_SET(agentListenFd, &readFds);
                 if (agentListenFd > maxFd)
                     maxFd = agentListenFd;
             }
             if (agentFd >= 0
-                    && threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
+                    && threadCtx->agentCtx.state == APP_STATE_CONNECTED) {
                 FD_SET(agentFd, &readFds);
                 if (agentFd > maxFd)
                     maxFd = agentFd;
             }
             #endif /* WOLFSSH_AGENT */
             #ifdef WOLFSSH_FWD
-            if (fwdListenFd == -1
-                    && threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
-                fwdListenFd = threadCtx->fwdCbCtx.listenFd;
-                FD_SET(fwdListenFd, &readFds);
-                if (fwdListenFd > maxFd)
-                    maxFd = fwdListenFd;
+            if (threadCtx->fwdCtx.state == APP_STATE_LISTEN) {
+                if (fwdListenFd == -1) {
+                    fwdListenFd = threadCtx->fwdCtx.listenFd;
+                }
+                if (fwdListenFd >= 0) {
+                    FD_SET(fwdListenFd, &readFds);
+                    if (fwdListenFd > maxFd)
+                        maxFd = fwdListenFd;
+                }
             }
-            if (fwdFd >= 0 &&
-                (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED
-                || threadCtx->fwdCbCtx.state == FWD_STATE_DIRECT_CONNECTED)) {
-
+            if (fwdFd >= 0
+                    && (threadCtx->fwdCtx.state == APP_STATE_CONNECTED)) {
                 FD_SET(fwdFd, &readFds);
-                FD_SET(fwdFd, &exFds);
                 if (fwdFd > maxFd)
                     maxFd = fwdFd;
             }
             #endif /* WOLFSSH_FWD */
 
-            rc = select((int)maxFd + 1, &readFds, NULL, &exFds, NULL);
-            if (rc == -1)
+            rc = select((int)maxFd + 1, &readFds, NULL, NULL, NULL);
+            if (rc == -1) {
                 break;
+            }
 
             if (FD_ISSET(sshFd, &readFds)) {
                 word32 lastChannel = 0;
@@ -875,7 +872,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     rc = wolfSSH_get_error(ssh);
                     if (rc == WS_CHAN_RXD) {
                         #ifdef WOLFSSH_SHELL
-                        if (threadCtx->shellCtx.isConnected &&
+                        if (threadCtx->shellCtx.state == APP_STATE_CONNECTED &&
                                 lastChannel == threadCtx->shellCtx.channelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh,
                                     threadCtx->shellCtx.channelId,
@@ -887,7 +884,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                 buf_dump(threadCtx->channelBuffer, cnt_r);
                             #endif
                             if (!threadCtx->echo) {
-                                cnt_w = (int)write(threadCtx->shellCtx.childFd,
+                                cnt_w = (int)write(threadCtx->shellCtx.appFd,
                                         threadCtx->channelBuffer, cnt_r);
                             }
                             else {
@@ -922,13 +919,10 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         }
                         #endif
                         #ifdef WOLFSSH_FWD
-                        if ((threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED ||
-                             threadCtx->fwdCbCtx.state ==
-                                    FWD_STATE_DIRECT_CONNECTED) &&
-                            lastChannel == threadCtx->fwdCbCtx.channelId) {
-
+                        if (threadCtx->fwdCtx.state == APP_STATE_CONNECTED
+                                && lastChannel == threadCtx->fwdCtx.channelId) {
                             cnt_r = wolfSSH_ChannelIdRead(ssh,
-                                    threadCtx->fwdCbCtx.channelId,
+                                    threadCtx->fwdCtx.channelId,
                                     threadCtx->channelBuffer,
                                     sizeof threadCtx->channelBuffer);
                             if (cnt_r <= 0)
@@ -945,36 +939,25 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     }
                     else if (rc == WS_CHANNEL_CLOSED) {
                         #ifdef WOLFSSH_FWD
-                        if (lastChannel == threadCtx->fwdCbCtx.channelId) {
-                            if (threadCtx->fwdCbCtx.state
-                                    == FWD_STATE_CONNECTED) {
-                                /* Read zero-returned. Socket is closed.
-                                 * Go back to listening. */
-                                if (fwdFd != -1) {
-                                    WCLOSESOCKET(fwdFd);
-                                    fwdFd = -1;
-                                }
-                                if (threadCtx->fwdCbCtx.originName != NULL) {
-                                    WFREE(threadCtx->fwdCbCtx.originName,
-                                            NULL, 0);
-                                    threadCtx->fwdCbCtx.originName = NULL;
-                                }
-                                threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
+                        if (lastChannel == threadCtx->fwdCtx.channelId
+                                && threadCtx->fwdCtx.state ==
+                                        APP_STATE_CONNECTED) {
+                            /* Read zero-returned. Socket is closed.
+                             * Go back to listening. */
+                            if (fwdFd != -1) {
+                                WCLOSESOCKET(fwdFd);
+                                fwdFd = -1;
                             }
-                            else if (threadCtx->fwdCbCtx.state
-                                    == FWD_STATE_DIRECT_CONNECTED) {
-                                /* Read zero-returned. Socket is closed.
-                                 * Go back to init. */
-                                if (fwdFd != -1) {
-                                    WCLOSESOCKET(fwdFd);
-                                    fwdFd = -1;
-                                }
-                                if (threadCtx->fwdCbCtx.originName != NULL) {
-                                    WFREE(threadCtx->fwdCbCtx.originName,
-                                            NULL, 0);
-                                    threadCtx->fwdCbCtx.originName = NULL;
-                                }
-                                threadCtx->fwdCbCtx.state = FWD_STATE_INIT;
+                            if (threadCtx->fwdCbCtx.originName != NULL) {
+                                WFREE(threadCtx->fwdCbCtx.originName,
+                                        NULL, 0);
+                                threadCtx->fwdCbCtx.originName = NULL;
+                            }
+                            if (threadCtx->fwdCbCtx.isDirect) {
+                                threadCtx->fwdCtx.state = APP_STATE_INIT;
+                            }
+                            else {
+                                threadCtx->fwdCtx.state = APP_STATE_LISTEN;
                             }
                         }
                         #endif
@@ -990,11 +973,11 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 }
             }
             #ifdef WOLFSSH_SHELL
-            if (threadCtx->shellCtx.isConnected) {
-                if (FD_ISSET(threadCtx->shellCtx.childFd, &readFds)) {
-                    cnt_r = (int)read(threadCtx->shellCtx.childFd,
-                            threadCtx->shellBuffer,
-                            sizeof threadCtx->shellBuffer);
+            if (threadCtx->shellCtx.state == APP_STATE_CONNECTED) {
+                if (FD_ISSET(threadCtx->shellCtx.appFd, &readFds)) {
+                    cnt_r = (int)read(threadCtx->shellCtx.appFd,
+                            threadCtx->shellCtx.buffer,
+                            sizeof threadCtx->shellCtx.buffer);
                     /* This read will return 0 on EOF */
                     if (cnt_r <= 0) {
                         int err = errno;
@@ -1009,12 +992,12 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     }
                     else {
                         #ifdef SHELL_DEBUG
-                            buf_dump(threadCtx->shellBuffer, cnt_r);
+                            buf_dump(threadCtx->shellCtx.buffer, cnt_r);
                         #endif
                         if (cnt_r > 0) {
                             cnt_w = wolfSSH_ChannelIdSend(ssh,
                                     threadCtx->shellCtx.channelId,
-                                    threadCtx->shellBuffer, cnt_r);
+                                    threadCtx->shellCtx.buffer, cnt_r);
                             if (cnt_w < 0)
                                 break;
                         }
@@ -1024,18 +1007,20 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             #endif /* WOLFSSH_SHELL */
             #ifdef WOLFSSH_AGENT
             if (agentFd >= 0
-                    && threadCtx->agentCbCtx.state == AGENT_STATE_CONNECTED) {
+                    && threadCtx->agentCtx.state == APP_STATE_CONNECTED) {
                 if (FD_ISSET(agentFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("agentFd set in readfd\n");
                     #endif
                     cnt_r = (int)recv(agentFd,
-                            threadCtx->agentBuffer,
-                            sizeof threadCtx->agentBuffer, 0);
+                            threadCtx->agentCtx.buffer,
+                            sizeof threadCtx->agentCtx.buffer, 0);
                     if (cnt_r == 0) {
                         /* Read zero-returned. Socket is closed. Go back
                            to listening. */
-                        threadCtx->agentCbCtx.state = AGENT_STATE_LISTEN;
+                        WCLOSESOCKET(agentFd);
+                        agentFd = -1;
+                        threadCtx->agentCtx.state = APP_STATE_LISTEN;
                         continue;
                     }
                     else if (cnt_r < 0) {
@@ -1048,7 +1033,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                 err == SOCKET_ECONNABORTED) {
                             /* Connection reset. Socket is closed.
                              * Go back to listening. */
-                            threadCtx->agentCbCtx.state = AGENT_STATE_LISTEN;
+                            threadCtx->agentCtx.state = APP_STATE_LISTEN;
                             continue;
                         }
                         break;
@@ -1058,14 +1043,14 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                             buf_dump(threadCtx->agentBuffer, cnt_r);
                         #endif
                         cnt_w = wolfSSH_ChannelIdSend(ssh, agentChannelId,
-                                threadCtx->agentBuffer, cnt_r);
+                                threadCtx->agentCtx.buffer, cnt_r);
                         if (cnt_w <= 0) {
                             break;
                         }
                     }
                 }
             }
-            if (threadCtx->agentCbCtx.state == AGENT_STATE_LISTEN) {
+            if (threadCtx->agentCtx.state == APP_STATE_LISTEN) {
                 if (FD_ISSET(agentListenFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("accepting agent connection\n");
@@ -1078,38 +1063,35 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         }
                     }
                     else {
-                        threadCtx->agentCbCtx.state = AGENT_STATE_CONNECTED;
-                        threadCtx->agentCbCtx.fd = agentFd;
+                        threadCtx->agentCtx.state = APP_STATE_CONNECTED;
+                        threadCtx->agentCtx.appFd = agentFd;
                     }
                 }
             }
             #endif
             #ifdef WOLFSSH_FWD
-            if (fwdFd >= 0 &&
-                 (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED
-                 || threadCtx->fwdCbCtx.state == FWD_STATE_DIRECT_CONNECTED)) {
+            if (fwdFd >= 0
+                    && threadCtx->fwdCtx.state == APP_STATE_CONNECTED) {
 
                 if (FD_ISSET(fwdFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("fwdFd set in readfd\n");
                     #endif
                     cnt_r = (int)recv(fwdFd,
-                            threadCtx->fwdBuffer + fwdBufferIdx,
-                            sizeof threadCtx->fwdBuffer - fwdBufferIdx, 0);
+                            threadCtx->fwdCtx.buffer + fwdBufferIdx,
+                            sizeof threadCtx->fwdCtx.buffer - fwdBufferIdx, 0);
                     if (cnt_r == 0) {
                         /* Read zero-returned. Socket is closed. Go back
                            to listening. */
                         WCLOSESOCKET(fwdFd);
                         fwdFd = -1;
                         if (threadCtx->fwdCbCtx.hostName != NULL) {
-                            WFREE(threadCtx->fwdCbCtx.hostName,
-                                    NULL, 0);
+                            WFREE(threadCtx->fwdCbCtx.hostName, NULL, 0);
                             threadCtx->fwdCbCtx.hostName = NULL;
                         }
-                        if (threadCtx->fwdCbCtx.state == FWD_STATE_CONNECTED)
-                            threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
-                        else
-                            threadCtx->fwdCbCtx.state = FWD_STATE_INIT;
+                        threadCtx->fwdCtx.state =
+                            threadCtx->fwdCbCtx.isDirect ?
+                                APP_STATE_INIT : APP_STATE_LISTEN;
                         continue;
                     }
                     else if (cnt_r < 0) {
@@ -1123,23 +1105,25 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                 err == SOCKET_ECONNABORTED) {
                             /* Connection reset. Socket is closed.
                              * Go back to listening. */
+                            wolfSSH_ChannelExit(threadCtx->fwdCtx.channel);
                             WCLOSESOCKET(fwdFd);
-                            threadCtx->fwdCbCtx.state = FWD_STATE_LISTEN;
+                            fwdFd = -1;
+                            threadCtx->fwdCtx.state = APP_STATE_LISTEN;
                             continue;
                         }
                         break;
                     }
                     else {
                     #ifdef SHELL_DEBUG
-                        buf_dump(threadCtx->fwdBuffer, cnt_r);
+                        buf_dump(threadCtx->fwdCb.buffer, cnt_r);
                     #endif
                         fwdBufferIdx += cnt_r;
                     }
                 }
                 if (fwdBufferIdx > 0) {
                     cnt_w = wolfSSH_ChannelIdSend(ssh,
-                            threadCtx->fwdCbCtx.channelId,
-                            threadCtx->fwdBuffer, fwdBufferIdx);
+                            threadCtx->fwdCtx.channelId,
+                            threadCtx->fwdCtx.buffer, fwdBufferIdx);
                     if (cnt_w > 0) {
                         fwdBufferIdx = 0;
                     }
@@ -1155,7 +1139,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                 }
             }
             if (fwdListenFd > 0
-                    && threadCtx->fwdCbCtx.state == FWD_STATE_LISTEN) {
+                    && threadCtx->fwdCtx.state == APP_STATE_LISTEN) {
                 if (FD_ISSET(fwdListenFd, &readFds)) {
                     #ifdef SHELL_DEBUG
                         printf("accepting fwd connection\n");
@@ -1173,8 +1157,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         const char* out = NULL;
                         char addr[200];
 
-                        threadCtx->fwdCbCtx.state = FWD_STATE_CONNECT;
-                        threadCtx->fwdCbCtx.appFd = fwdFd;
+                        threadCtx->fwdCtx.state = APP_STATE_CONNECT;
+                        threadCtx->fwdCtx.appFd = fwdFd;
                         originAddrSz = sizeof originAddr;
                         WMEMSET(&originAddr, 0, originAddrSz);
                         if (getpeername(fwdFd,
@@ -1213,23 +1197,27 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                 ChildRunning = 0;
                                 break;
                             }
+                            threadCtx->fwdCtx.channel = newChannel;
                         }
                     }
                 }
             }
-            if (threadCtx->fwdCbCtx.state == FWD_STATE_DIRECT) {
+            if (threadCtx->fwdCtx.state == APP_STATE_CONNECT) {
                 fwdFd = connect_addr(threadCtx->fwdCbCtx.hostName,
                         threadCtx->fwdCbCtx.hostPort);
 
                 if (fwdFd > 0) {
-                    threadCtx->fwdCbCtx.state = FWD_STATE_DIRECT_CONNECTED;
+                    threadCtx->fwdCtx.state = APP_STATE_CONNECTED;
+                    threadCtx->fwdCbCtx.isDirect = 1;
                 }
             }
             #endif
         }
 #ifdef WOLFSSH_SHELL
-        if (!threadCtx->echo)
-            WCLOSESOCKET(threadCtx->shellCtx.childFd);
+        if (!threadCtx->echo) {
+            WCLOSESOCKET(threadCtx->shellCtx.appFd);
+            threadCtx->shellCtx.appFd = -1;
+        }
 #endif
     }
 
@@ -1512,10 +1500,10 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
         }
     }
 
-    if (threadCtx->fd != -1) {
+/*    if (threadCtx->fd != 0) {
         WCLOSESOCKET(threadCtx->fd);
         threadCtx->fd = -1;
-    }
+    }*/
 #ifdef WOLFSSH_FWD
     if (threadCtx->fwdCbCtx.hostName != NULL) {
         WFREE(threadCtx->fwdCbCtx.hostName, NULL, 0);
@@ -2740,18 +2728,19 @@ THREAD_RETURN WOLFSSH_THREAD echoserver_test(void* args)
         threadCtx->ctx = ctx;
 #endif
         threadCtx->ssh = ssh;
-        threadCtx->fd = clientFd;
-        threadCtx->id = threadCount++;
+        threadCtx->tid = threadCount++;
         threadCtx->nonBlock = nonBlock;
         threadCtx->echo = echo;
 #ifdef WOLFSSH_AGENT
+        threadCtx->agentCtx.privateData = (void*)&threadCtx->agentCbCtx;
         wolfSSH_set_agent_cb_ctx(ssh, &threadCtx->agentCbCtx);
 #endif
 #ifdef WOLFSSH_FWD
-        threadCtx->fwdCbCtx.state = FWD_STATE_INIT;
-        threadCtx->fwdCbCtx.listenFd = -1;
-        threadCtx->fwdCbCtx.appFd = -1;
-        wolfSSH_SetFwdCbCtx(ssh, &threadCtx->fwdCbCtx);
+        threadCtx->fwdCtx.state = APP_STATE_INIT;
+        threadCtx->fwdCtx.listenFd = -1;
+        threadCtx->fwdCtx.appFd = -1;
+        threadCtx->fwdCtx.privateData = (void*)&threadCtx->fwdCbCtx;
+        wolfSSH_SetFwdCbCtx(ssh, &threadCtx->fwdCtx);
 #endif
         server_worker(threadCtx);
 
