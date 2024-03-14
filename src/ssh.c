@@ -596,8 +596,6 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
                 WLOG(WS_LOG_DEBUG, acceptState, "SERVER_USERAUTH_SENT");
 #if 0
-                FALL_THROUGH;
-
             case ACCEPT_SERVER_USERAUTH_SENT:
                 while (ssh->clientState < CLIENT_CHANNEL_OPEN_DONE) {
                     if (DoReceive(ssh) < 0) {
@@ -691,19 +689,6 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 WLOG(WS_LOG_DEBUG, acceptState, "CLIENT_SESSION_ESTABLISHED");
                 break;
 
-#ifdef WOLFSSH_SCP
-            case ACCEPT_INIT_SCP_TRANSFER:
-                if (DoScpRequest(ssh) < 0) {
-                    WLOG(WS_LOG_DEBUG, acceptError, "INIT_SCP_TRANSFER",
-                         ssh->error);
-                    return WS_FATAL_ERROR;
-                }
-                return WS_SCP_COMPLETE;
-#endif
-#ifdef WOLFSSH_SFTP
-            case ACCEPT_INIT_SFTP:
-                return wolfSSH_SFTP_accept(ssh);
-#endif
 #endif /* 0 */
         }
     } /* end while */
