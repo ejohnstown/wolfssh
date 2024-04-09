@@ -69,8 +69,6 @@ char* myoptarg = NULL;
 #if !defined(NO_WOLFSSH_SERVER) && !defined(NO_WOLFSSH_CLIENT) && \
     !defined(SINGLE_THREADED) && !defined(WOLFSSH_TEST_BLOCK)
 
-#ifdef WOLFSSH_SHELL
-
 static int tsClientUserAuth(byte authType, WS_UserAuthData* authData, void* ctx)
 {
     static char password[] = "upthehill";
@@ -150,7 +148,6 @@ static void wolfSSH_EchoTest(void)
 
     FreeTcpReady(&ready);
 }
-#endif /* WOLFSSH_SHELL */
 
 
 int wolfSSH_TestsuiteTest(int argc, char** argv)
@@ -179,9 +176,7 @@ int wolfSSH_TestsuiteTest(int argc, char** argv)
         ChangeToWolfSshRoot();
     #endif
 
-#ifdef WOLFSSH_SHELL
     wolfSSH_EchoTest();
-#endif
 
     wolfSSH_Cleanup();
 
