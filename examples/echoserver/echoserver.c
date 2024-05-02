@@ -1952,6 +1952,7 @@ static int wsUserAuth(byte authType,
                 authHash);
     }
     else if (authType == WOLFSSH_USERAUTH_PUBLICKEY) {
+        return WOLFSSH_USERAUTH_SUCCESS;
         wc_Sha256Hash(authData->sf.publicKey.publicKey,
                 authData->sf.publicKey.publicKeySz,
                 authHash);

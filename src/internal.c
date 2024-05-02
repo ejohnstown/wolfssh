@@ -8141,6 +8141,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
 
     msg = buf[idx++];
     /* At this point, payload starts at "buf + idx". */
+    DumpOctetString(buf+idx, payloadSz);
 
     /* sanity check on payloadSz. Uses "or" condition because of the case when
      * adding idx to payloadSz causes it to overflow.
@@ -12633,90 +12634,89 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
         pk = &authData->sf.publicKey;
         output[begin++] = pk->hasSignature;
 
-        if (pk->hasSignature) {
-            WLOG(WS_LOG_DEBUG, "User signature type: %s",
-                    IdToName(keySig->keySigId));
+        WLOG(WS_LOG_DEBUG, "User signature type: %s",
+                IdToName(keySig->keySigId));
 
-            switch (keySig->keySigId) {
-                #ifndef WOLFSSH_NO_RSA
-                case ID_SSH_RSA:
-                case ID_RSA_SHA2_256:
-                case ID_RSA_SHA2_512:
-                    c32toa(keySig->nameSz, output + begin);
-                    begin += LENGTH_SZ;
-                    WMEMCPY(output + begin, keySig->name, keySig->nameSz);
-                    begin += keySig->nameSz;
-                    c32toa(pk->publicKeySz, output + begin);
-                    begin += LENGTH_SZ;
-                    WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
-                    begin += pk->publicKeySz;
-                    keySig->keySigId = ID_RSA_SHA2_256;
+        switch (keySig->keySigId) {
+            #ifndef WOLFSSH_NO_RSA
+            case ID_SSH_RSA:
+            case ID_RSA_SHA2_256:
+            case ID_RSA_SHA2_512:
+                c32toa(keySig->nameSz, output + begin);
+                begin += LENGTH_SZ;
+                WMEMCPY(output + begin, keySig->name, keySig->nameSz);
+                begin += keySig->nameSz;
+                c32toa(pk->publicKeySz, output + begin);
+                begin += LENGTH_SZ;
+                WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
+                begin += pk->publicKeySz;
+                keySig->keySigId = ID_RSA_SHA2_256;
+                if (pk->hasSignature) {
                     ret = BuildUserAuthRequestRsa(ssh, output, &begin,
                             authData, sigStart, sigStartIdx, keySig);
-                    break;
-                #ifdef WOLFSSH_CERTS
-                case ID_X509V3_SSH_RSA:
-                    /* public key type name */
-                    c32toa(pk->publicKeyTypeSz, output + begin);
-                    begin += LENGTH_SZ;
-                    WMEMCPY(output + begin,
-                            pk->publicKeyType, pk->publicKeyTypeSz);
-                    begin += pk->publicKeyTypeSz;
+                }
+                break;
+            #ifdef WOLFSSH_CERTS
+            case ID_X509V3_SSH_RSA:
+                /* public key type name */
+                c32toa(pk->publicKeyTypeSz, output + begin);
+                begin += LENGTH_SZ;
+                WMEMCPY(output + begin,
+                        pk->publicKeyType, pk->publicKeyTypeSz);
+                begin += pk->publicKeyTypeSz;
 
-                    ret = BuildRFC6187Info(ssh, keySig->keySigId,
-                            pk->publicKey, pk->publicKeySz, NULL, 0,
-                            output, &ssh->outputBuffer.bufferSz, &begin);
-                    if (ret == WS_SUCCESS) {
-                        ret = BuildUserAuthRequestRsaCert(ssh, output, &begin,
-                            authData, sigStart, sigStartIdx, keySig);
-                    }
-                    break;
-                #endif
-                #endif
-                #ifndef WOLFSSH_NO_ECDSA
-                case ID_ECDSA_SHA2_NISTP256:
-                case ID_ECDSA_SHA2_NISTP384:
-                case ID_ECDSA_SHA2_NISTP521:
-                    c32toa(pk->publicKeyTypeSz, output + begin);
-                    begin += LENGTH_SZ;
-                    WMEMCPY(output + begin,
-                            pk->publicKeyType, pk->publicKeyTypeSz);
-                    begin += pk->publicKeyTypeSz;
-                    c32toa(pk->publicKeySz, output + begin);
-                    begin += LENGTH_SZ;
-                    WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
-                    begin += pk->publicKeySz;
+                ret = BuildRFC6187Info(ssh, keySig->keySigId,
+                        pk->publicKey, pk->publicKeySz, NULL, 0,
+                        output, &ssh->outputBuffer.bufferSz, &begin);
+                if (ret == WS_SUCCESS && pk->hasSignature) {
+                    ret = BuildUserAuthRequestRsaCert(ssh, output, &begin,
+                        authData, sigStart, sigStartIdx, keySig);
+                }
+                break;
+            #endif
+            #endif
+            #ifndef WOLFSSH_NO_ECDSA
+            case ID_ECDSA_SHA2_NISTP256:
+            case ID_ECDSA_SHA2_NISTP384:
+            case ID_ECDSA_SHA2_NISTP521:
+                c32toa(pk->publicKeyTypeSz, output + begin);
+                begin += LENGTH_SZ;
+                WMEMCPY(output + begin,
+                        pk->publicKeyType, pk->publicKeyTypeSz);
+                begin += pk->publicKeyTypeSz;
+                c32toa(pk->publicKeySz, output + begin);
+                begin += LENGTH_SZ;
+                WMEMCPY(output + begin, pk->publicKey, pk->publicKeySz);
+                begin += pk->publicKeySz;
+                if (pk->hasSignature) {
                     ret = BuildUserAuthRequestEcc(ssh, output, &begin,
                             authData, sigStart, sigStartIdx, keySig);
-                    break;
-                #ifdef WOLFSSH_CERTS
-                case ID_X509V3_ECDSA_SHA2_NISTP256:
-                case ID_X509V3_ECDSA_SHA2_NISTP384:
-                case ID_X509V3_ECDSA_SHA2_NISTP521:
-                    /* public key type name */
-                    c32toa(pk->publicKeyTypeSz, output + begin);
-                    begin += LENGTH_SZ;
-                    WMEMCPY(output + begin,
-                            pk->publicKeyType, pk->publicKeyTypeSz);
-                    begin += pk->publicKeyTypeSz;
+                }
+                break;
+            #ifdef WOLFSSH_CERTS
+            case ID_X509V3_ECDSA_SHA2_NISTP256:
+            case ID_X509V3_ECDSA_SHA2_NISTP384:
+            case ID_X509V3_ECDSA_SHA2_NISTP521:
+                /* public key type name */
+                c32toa(pk->publicKeyTypeSz, output + begin);
+                begin += LENGTH_SZ;
+                WMEMCPY(output + begin,
+                        pk->publicKeyType, pk->publicKeyTypeSz);
+                begin += pk->publicKeyTypeSz;
 
-                    /* build RFC6178 public key to send */
-                    ret = BuildRFC6187Info(ssh, keySig->keySigId,
-                            pk->publicKey, pk->publicKeySz, NULL, 0,
-                            output, &ssh->outputBuffer.bufferSz, &begin);
-                    if (ret == WS_SUCCESS) {
-                        ret = BuildUserAuthRequestEccCert(ssh, output, &begin,
-                            authData, sigStart, sigStartIdx, keySig);
-                    }
-                    break;
-                #endif
-                #endif
-                default:
-                    ret = WS_INVALID_ALGO_ID;
-            }
-        }
-        else {
-            ret = WS_INVALID_ALGO_ID;
+                /* build RFC6178 public key to send */
+                ret = BuildRFC6187Info(ssh, keySig->keySigId,
+                        pk->publicKey, pk->publicKeySz, NULL, 0,
+                        output, &ssh->outputBuffer.bufferSz, &begin);
+                if (ret == WS_SUCCESS && pk->hasSignature) {
+                    ret = BuildUserAuthRequestEccCert(ssh, output, &begin,
+                        authData, sigStart, sigStartIdx, keySig);
+                }
+                break;
+            #endif
+            #endif
+            default:
+                ret = WS_INVALID_ALGO_ID;
         }
 
         if (ret == WS_SUCCESS)
@@ -12823,7 +12823,7 @@ int SendUserAuthRequest(WOLFSSH* ssh, byte authType, int addSig)
         if (authId == ID_USERAUTH_PASSWORD)
             ret = PrepareUserAuthRequestPassword(ssh, &payloadSz, &authData);
         else if (authId == ID_USERAUTH_PUBLICKEY && !ssh->userAuthPkDone) {
-            authData.sf.publicKey.hasSignature = 1;
+//            authData.sf.publicKey.hasSignature = 1;
             ssh->userAuthPkDone = 1;
             ret = PrepareUserAuthRequestPublicKey(ssh, &payloadSz, &authData,
                     keySig_ptr);
