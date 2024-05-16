@@ -1019,6 +1019,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->kSz         = (word32)sizeof(ssh->k);
     ssh->handshake   = handshake;
     ssh->connectChannelId = WOLFSSH_SESSION_SHELL;
+    ssh->service = ID_NONE;
     ssh->algoListKex = ctx->algoListKex;
     ssh->algoListKey = ctx->algoListKey;
     ssh->algoListCipher = ctx->algoListCipher;
@@ -5931,37 +5932,26 @@ static int DoDisconnect(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 }
 
 
-static int DoServiceRequest(WOLFSSH* ssh,
-                            byte* buf, word32 len, word32* idx)
+static int DoServiceRequest(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
-    word32 begin = *idx;
+    const char *name = NULL;
     word32 nameSz;
-    char     serviceName[WOLFSSH_MAX_NAMESZ];
+    int ret;
 
-    WOLFSSH_UNUSED(len);
+    ret = GetStringRef(&nameSz, (const byte **)&name, buf, len, idx);
+    if (ret == WS_SUCCESS) {
+        byte serviceId;
 
-    ato32(buf + begin, &nameSz);
-    begin += LENGTH_SZ;
-
-    if (begin + nameSz > len || nameSz >= WOLFSSH_MAX_NAMESZ) {
-        return WS_BUFFER_E;
+        serviceId = NameToId(name, nameSz);
+        WLOG(WS_LOG_DEBUG, "Requesting service: %s", IdToName(serviceId));
+        ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
     }
 
-    WMEMCPY(serviceName, buf + begin, nameSz);
-    begin += nameSz;
-    serviceName[nameSz] = 0;
-
-    *idx = begin;
-
-    WLOG(WS_LOG_DEBUG, "Requesting service: %s", serviceName);
-    ssh->clientState = CLIENT_USERAUTH_REQUEST_DONE;
-
-    return WS_SUCCESS;
+    return ret;
 }
 
 
-static int DoServiceAccept(WOLFSSH* ssh,
-                           byte* buf, word32 len, word32* idx)
+static int DoServiceAccept(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 {
     word32 begin = *idx;
     word32 nameSz;

@@ -684,6 +684,7 @@ struct WOLFSSH {
     const char* algoListCipher;
     const char* algoListMac;
     const char* algoListKeyAccepted;
+    byte service;
     byte acceptState;
     byte connectState;
     byte clientState;
