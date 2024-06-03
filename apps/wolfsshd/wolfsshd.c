@@ -1180,7 +1180,15 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     byte channelBuffer[EXAMPLE_BUFFER_SZ];
     char* forcedCmd;
     int   windowFull = 0;
-    int   idle = 0;
+    int   peerConnected = 1;
+    int   stdoutEmpty = 0;
+
+    sshFd = -1;
+    childFd = -1;
+    stdoutPipe[0] = -1;
+    stdoutPipe[1] = -1;
+    stderrPipe[0] = -1;
+    stderrPipe[1] = -1;
 
     forcedCmd = wolfSSHD_ConfigGetForcedCmd(usrConf);
 
@@ -1238,6 +1246,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         if (forcedCmd) {
             close(stdoutPipe[0]);
             close(stderrPipe[0]);
+            stdoutPipe[0] = -1;
+            stderrPipe[0] = -1;
             if (dup2(stdoutPipe[1], STDOUT_FILENO) == -1) {
                 wolfSSH_Log(WS_LOG_ERROR,
                     "[SSHD] Error redirecting stdout pipe");
@@ -1409,19 +1419,23 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         close(stderrPipe[1]);
     }
 
-    while (idle < MAX_IDLE_COUNT) {
+    while (ChildRunning || windowFull || !stdoutEmpty || peerConnected) {
         byte tmp[2];
         fd_set readFds;
+        fd_set writeFds;
         WS_SOCKET_T maxFd;
         int cnt_r;
         int cnt_w;
         int pending = 0;
 
-        idle++; /* increment idle count, gets reset if not idle */
-
         FD_ZERO(&readFds);
         FD_SET(sshFd, &readFds);
         maxFd = sshFd;
+
+        FD_ZERO(&writeFds);
+        if (windowFull) {
+            FD_SET(sshFd, &writeFds);
+        }
 
         /* select on stdout/stderr pipes with forced commands */
         if (forcedCmd) {
@@ -1440,18 +1454,18 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         }
 
         if (wolfSSH_stream_peek(ssh, tmp, 1) <= 0) {
-            rc = select((int)maxFd + 1, &readFds, NULL, NULL, NULL);
+            rc = select((int)maxFd + 1, &readFds, &writeFds, NULL, NULL);
             if (rc == -1)
                 break;
         }
         else {
             pending = 1; /* found some pending SSH data */
-            idle    = 0;
         }
 
         if (windowFull || pending || FD_ISSET(sshFd, &readFds)) {
             word32 lastChannel = 0;
 
+            windowFull = 0;
             /* The following tries to read from the first channel inside
                the stream. If the pending data in the socket is for
                another channel, this will return an error with id
@@ -1462,7 +1476,6 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             if (cnt_r < 0) {
                 rc = wolfSSH_get_error(ssh);
                 if (rc == WS_CHAN_RXD) {
-                    idle = 0;
                     if (lastChannel == shellChannelId) {
                         cnt_r = wolfSSH_ChannelIdRead(ssh, shellChannelId,
                                 channelBuffer,
@@ -1476,6 +1489,11 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     }
                 }
                 else if (rc == WS_CHANNEL_CLOSED) {
+                    peerConnected = 0;
+                    continue;
+                }
+                else if (rc == WS_WANT_WRITE) {
+                    windowFull = 1;
                     continue;
                 }
                 else if (rc != WS_WANT_READ) {
@@ -1490,7 +1508,10 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     shellBuffer, cnt_r);
             if (cnt_w == WS_WINDOW_FULL) {
                 windowFull = 1;
-                idle = 0;
+                continue;
+            }
+            else if (cnt_w == WS_WANT_WRITE) {
+                windowFull = 1;
                 continue;
             }
             else {
@@ -1511,10 +1532,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
                 else {
                     if (cnt_r > 0) {
-                        idle = 0;
                         cnt_w = wolfSSH_extended_data_send(ssh, shellBuffer,
                             cnt_r);
                         if (cnt_w == WS_WINDOW_FULL) {
+                            windowFull = 1;
+                            continue;
+                        }
+                        else if (cnt_w == WS_WANT_WRITE) {
                             windowFull = 1;
                             continue;
                         }
@@ -1529,23 +1553,31 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 cnt_r = (int)read(stdoutPipe[0], shellBuffer,
                     sizeof shellBuffer);
                 /* This read will return 0 on EOF */
-                if (cnt_r <= 0) {
+                if (cnt_r < 0) {
                     int err = errno;
                     if (err != EAGAIN && err != 0) {
                         break;
                     }
                 }
+                else if (cnt_r == 0) {
+                    stdoutEmpty = 1;
+                }
                 else {
                     if (cnt_r > 0) {
-                        idle = 0;
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
                         if (cnt_w == WS_WINDOW_FULL) {
                             windowFull = 1;
                             continue;
                         }
-                        else if (cnt_w < 0)
+                        else if (cnt_w == WS_WANT_WRITE) {
+                            windowFull = 1;
+                            continue;
+                        }
+                        else if (cnt_w < 0) {
+                            kill(childPid, SIGINT);
                             break;
+                        }
                     }
                 }
             }
@@ -1562,22 +1594,27 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
                 else {
                     if (cnt_r > 0) {
-                        idle = 0;
                         cnt_w = wolfSSH_ChannelIdSend(ssh, shellChannelId,
                                 shellBuffer, cnt_r);
                         if (cnt_w == WS_WINDOW_FULL) {
                             windowFull = 1;
                             continue;
                         }
-                        else if (cnt_w < 0)
+                        else if (cnt_w == WS_WANT_WRITE) {
+                            windowFull = 1;
+                            continue;
+                        }
+                        else if (cnt_w < 0) {
+                            kill(childPid, SIGINT);
                             break;
+                        }
                     }
                 }
             }
         }
 
-        if (ChildRunning && idle) {
-            idle = 0; /* waiting on child process */
+        if (!ChildRunning && peerConnected && stdoutEmpty && !windowFull) {
+            peerConnected = 0;
         }
     }
 
@@ -1890,7 +1927,7 @@ static void* HandleConnection(void* arg)
             #ifdef _WIN32
                 Sleep(1);
             #else
-                usleep(1);
+                usleep(100000);
             #endif
             }
 
@@ -1904,6 +1941,13 @@ static void* HandleConnection(void* arg)
     /* check if there is a response to the shutdown */
     wolfSSH_free(ssh);
     if (conn != NULL) {
+        byte sc[1024];
+        shutdown(conn->fd, 1);
+        /* Spin until socket closes. */
+        do {
+            ret = (int)recv(conn->fd, sc, 1024, 0);
+        } while (ret != 0);
+
         WCLOSESOCKET(conn->fd);
     }
     wolfSSH_Log(WS_LOG_INFO, "[SSHD] Return from closing connection = %d", ret);
