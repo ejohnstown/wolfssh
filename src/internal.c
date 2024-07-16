@@ -150,6 +150,11 @@ Flags:
   WOLFSSH_NO_CURVE25519_SHA256
     Set when Curve25519 or SHA2-256 are disabled in wolfSSL. Set to disable use
     of Curve25519 key exchange.
+  WOLFSSH_STATIC_BUFFER_LEN
+    Set to change the size of the static buffer used in the WOLFSSH_BUFFER
+    structure. This must be at least AES_BLOCK_SIZE. When larger, it will
+    reduce the chance that a dynamic receive buffer would need to be
+    allocated.
 */
 
 static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
@@ -2844,13 +2849,13 @@ int BufferInit(WOLFSSH_BUFFER* buffer, word32 size, void* heap)
     if (buffer == NULL)
         return WS_BAD_ARGUMENT;
 
-    if (size <= STATIC_BUFFER_LEN)
-        size = STATIC_BUFFER_LEN;
+    if (size <= WOLFSSH_STATIC_BUFFER_LEN)
+        size = WOLFSSH_STATIC_BUFFER_LEN;
 
     WMEMSET(buffer, 0, sizeof(WOLFSSH_BUFFER));
     buffer->heap = heap;
     buffer->bufferSz = size;
-    if (size > STATIC_BUFFER_LEN) {
+    if (size > WOLFSSH_STATIC_BUFFER_LEN) {
         buffer->buffer = (byte*)WMALLOC(size, heap, DYNTYPE_BUFFER);
         if (buffer->buffer == NULL)
             return WS_MEMORY_E;
@@ -2924,7 +2929,7 @@ void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree)
         WLOG(WS_LOG_DEBUG, "SB: usedSz = %u, forcedFree = %u",
              usedSz, forcedFree);
 
-        if (!forcedFree && usedSz > STATIC_BUFFER_LEN)
+        if (!forcedFree && usedSz > WOLFSSH_STATIC_BUFFER_LEN)
             return;
 
         if (!forcedFree && usedSz) {
@@ -2938,7 +2943,7 @@ void ShrinkBuffer(WOLFSSH_BUFFER* buf, int forcedFree)
         }
         buf->dynamicFlag = 0;
         buf->buffer = buf->staticBuffer;
-        buf->bufferSz = STATIC_BUFFER_LEN;
+        buf->bufferSz = WOLFSSH_STATIC_BUFFER_LEN;
         buf->length = forcedFree ? 0 : usedSz;
         buf->idx = 0;
     }

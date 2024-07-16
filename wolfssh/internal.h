@@ -449,10 +449,16 @@ WOLFSSH_LOCAL const char* IdToName(byte id);
 WOLFSSH_LOCAL const char* NameByIndexType(byte type, word32* index);
 
 
-#define STATIC_BUFFER_LEN AES_BLOCK_SIZE
 /* This is one AES block size. We always grab one
  * block size first to decrypt to find the size of
  * the rest of the data. */
+#ifndef WOLFSSH_STATIC_BUFFER_LEN
+    #define WOLFSSH_STATIC_BUFFER_LEN AES_BLOCK_SIZE
+#endif
+
+#if WOLFSSH_STATIC_BUFFER_LEN < AES_BLOCK_SIZE
+    #error "WOLFSSH_STATIC_BUFFER_LEN must be at least 16"
+#endif
 
 
 typedef struct WOLFSSH_BUFFER {
@@ -462,7 +468,7 @@ typedef struct WOLFSSH_BUFFER {
     word32 idx;       /* idx to part of length already consumed */
     byte* buffer;     /* place holder for actual buffer */
     word32 bufferSz;  /* current buffer size */
-    ALIGN16 byte staticBuffer[STATIC_BUFFER_LEN];
+    ALIGN16 byte staticBuffer[WOLFSSH_STATIC_BUFFER_LEN];
     byte dynamicFlag; /* dynamic memory currently in use */
 } WOLFSSH_BUFFER;
 
