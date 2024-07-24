@@ -2423,6 +2423,11 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     }
 
     if (ret == WS_CHAN_RXD) {
+        if (ssh->isKeying) {
+            ssh->error = WS_REKEYING;
+            return WS_REKEYING;
+        }
+
         WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_worker(), "
                            "data received on channel %u", ssh->lastRxId);
     }

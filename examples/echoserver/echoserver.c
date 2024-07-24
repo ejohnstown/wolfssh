@@ -1034,6 +1034,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         #endif
                         continue;
                     }
+                    else if (rc == WS_REKEYING) {
+                        continue;
+                    }
                     else if (rc != WS_WANT_READ) {
                         #ifdef SHELL_DEBUG
                             printf("Break:read sshFd returns %d: errno =%x\n",
