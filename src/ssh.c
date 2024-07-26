@@ -3010,6 +3010,16 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
                         ssh->primeGroupSz*8, 14);
                     break;
 
+                case ID_DH_GROUP15_SHA512:
+                    ret = WSNPRINTF(str, strSz, standard_dh_format,
+                        ssh->primeGroupSz*8, 15);
+                    break;
+
+                case ID_DH_GROUP16_SHA512:
+                    ret = WSNPRINTF(str, strSz, standard_dh_format,
+                        ssh->primeGroupSz*8, 16);
+                    break;
+
                 case ID_DH_GEX_SHA256:
                     ret = WSNPRINTF(str, strSz,
                         "%d-bit Diffie-Hellman with server-supplied group",
