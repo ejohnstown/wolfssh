@@ -3267,7 +3267,37 @@ size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str, size_t strSz)
     return ret < 0 ? 0 : (size_t)ret;
 }
 
-void wolfSSH_SetKeyingCompletionCb(WOLFSSH_CTX* ctx, WS_CallbackKeyingCompletion cb)
+
+int wolfSSH_SetKeyingCb(WOLFSSH_CTX* ctx, WS_CallbackKeying cb)
+{
+    int ret = WS_SSH_CTX_NULL_E;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetKeyingCb()");
+
+    if (ctx != NULL) {
+        ctx->keyingCb = cb;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+int wolfSSH_SetKeyingCtx(WOLFSSH* ssh, void* ctx)
+{
+    int ret = WS_SSH_NULL_E;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetKeyingCtx()");
+
+    if (ssh) {
+        ssh->keyingCtx = ctx;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+void wolfSSH_SetKeyingCompletionCb(WOLFSSH_CTX* ctx,
+        WS_CallbackKeyingCompletion cb)
 {
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_SetKeyingCompletionCb()");
 

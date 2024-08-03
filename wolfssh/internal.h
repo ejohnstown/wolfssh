@@ -553,6 +553,8 @@ struct WOLFSSH_CTX {
     void* heap;                       /* heap hint */
     WS_CallbackIORecv ioRecvCb;       /* I/O Receive Callback */
     WS_CallbackIOSend ioSendCb;       /* I/O Send Callback */
+    WS_CallbackKeying keyingCb;       /* Keying begin callback */
+    WS_CallbackKeyingCompletion keyingCompletionCb; /* Keying complete */
     WS_CallbackUserAuth userAuthCb;   /* User Authentication Callback */
     WS_CallbackUserAuthTypes userAuthTypesCb; /* Authentication Types Allowed */
     WS_CallbackUserAuthResult userAuthResultCb; /* User Authentication Result */
@@ -744,6 +746,8 @@ struct WOLFSSH {
     void* globalReqCtx;    /* Global Request CB context */
     void* reqSuccessCtx;   /* Global Request Sucess CB context */
     void* reqFailureCtx;   /* Global Request Failure CB context */
+    void* keyingCtx;       /* Keying begin CB context */
+    void* keyingCompletionCtx; /* Keying completion CB context */
     void* channelOpenCtx;  /* Channel Open CB context */
     void* channelReqCtx;   /* Channel Request CB context */
     void* channelEofCtx;   /* Channel EOF CB context */

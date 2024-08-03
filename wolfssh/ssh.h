@@ -163,11 +163,14 @@ typedef enum WS_Text {
 WOLFSSH_API size_t wolfSSH_GetText(WOLFSSH *ssh, WS_Text id, char *str,
         size_t strSz);
 
+typedef void (*WS_CallbackKeying)(void *ctx, int rekey);
+WOLFSSH_API int wolfSSH_SetKeyingCb(WOLFSSH_CTX* ctx, WS_CallbackKeying cb);
+WOLFSSH_API int wolfSSH_SetKeyingCtx(WOLFSSH* ssh, void* ctx);
+
 typedef void (*WS_CallbackKeyingCompletion)(void *);
-WOLFSSH_API void wolfSSH_SetKeyingCompletionCb(WOLFSSH_CTX*,
-        WS_CallbackKeyingCompletion);
-WOLFSSH_API void wolfSSH_SetKeyingCompletionCbCtx(WOLFSSH*,
-        void*);
+WOLFSSH_API void wolfSSH_SetKeyingCompletionCb(WOLFSSH_CTX* ctx,
+        WS_CallbackKeyingCompletion cb);
+WOLFSSH_API void wolfSSH_SetKeyingCompletionCbCtx(WOLFSSH* ssh, void* ctx);
 
 #define WS_CHANNEL_ID_SELF 0
 #define WS_CHANNEL_ID_PEER 1
