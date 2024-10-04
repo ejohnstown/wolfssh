@@ -1021,7 +1021,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->fs            = NULL;
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
-    ssh->isKeying    = 1;
+    ssh->keying    = 1;
     ssh->authId      = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[0] = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[1] = ID_USERAUTH_PASSWORD;
@@ -4139,9 +4139,14 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
         byte scratchLen[LENGTH_SZ];
         word32 strSz = 0;
 
-        if (!ssh->isKeying) {
+        ssh->peerKeying = 1;
+
+        if (!ssh->keying) {
             WLOG(WS_LOG_DEBUG, "Keying initiated");
             ret = SendKexInit(ssh);
+            if (ret == WS_SUCCESS) {
+                ssh->keying = 1;
+            }
         }
 
         /* account for possible want write case from SendKexInit */
@@ -5683,7 +5688,7 @@ static int DoNewKeys(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     if (ret == WS_SUCCESS) {
         ssh->rxCount = 0;
         ssh->highwaterFlag = 0;
-        ssh->isKeying = 0;
+        ssh->peerKeying = 0;
         HandshakeInfoFree(ssh->handshake, ssh->ctx->heap);
         ssh->handshake = NULL;
         WLOG(WS_LOG_DEBUG, "Keying completed");
@@ -8816,7 +8821,7 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
         case MSGID_KEXINIT:
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
             ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
-            if (ssh->isKeying == 1 &&
+            if (ssh->keying == 1 &&
                     ssh->connectState == CONNECT_SERVER_CHANNEL_REQUEST_DONE) {
                 if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
 #if !defined(WOLFSSH_NO_DH) && !defined(WOLFSSH_NO_DH_GEX_SHA256)
@@ -9849,7 +9854,7 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
-        ssh->isKeying = 1;
+        ssh->keying = 1;
         if (ssh->handshake == NULL) {
             ssh->handshake = HandshakeInfoNew(ssh->ctx->heap);
             if (ssh->handshake == NULL) {
@@ -14825,7 +14830,7 @@ int SendChannelData(WOLFSSH* ssh, word32 channelId,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (ssh->isKeying)
+        if (ssh->keying)
             ret = WS_REKEYING;
     }
 
@@ -14931,7 +14936,7 @@ int SendChannelExtendedData(WOLFSSH* ssh, word32 channelId,
         ret = WS_BAD_ARGUMENT;
 
     if (ret == WS_SUCCESS) {
-        if (ssh->isKeying)
+        if (ssh->keying)
             ret = WS_REKEYING;
     }
 

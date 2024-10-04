@@ -490,7 +490,7 @@ int wolfSSH_accept(WOLFSSH* ssh)
                 NO_BREAK;
 
             case ACCEPT_SERVER_KEXINIT_SENT:
-                while (ssh->isKeying) {
+                while (ssh->keying) {
                     if (DoReceive(ssh) < WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, acceptError,
                              "SERVER_KEXINIT_SENT", ssh->error);
@@ -778,7 +778,7 @@ int wolfSSH_connect(WOLFSSH* ssh)
             NO_BREAK;
 
         case CONNECT_CLIENT_KEXDH_INIT_SENT:
-            while (ssh->isKeying) {
+            while (ssh->keying) {
                 if (DoReceive(ssh) < WS_SUCCESS) {
                     WLOG(WS_LOG_DEBUG, connectError,
                          "CLIENT_KEXDH_INIT_SENT", ssh->error);
@@ -1035,7 +1035,7 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ssh == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
-    if (ssh->isKeying) {
+    if (ssh->keying) {
         ssh->error = WS_REKEYING;
         return WS_REKEYING;
     }
@@ -1140,7 +1140,7 @@ int wolfSSH_stream_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
-    if (ssh->isKeying) {
+    if (ssh->keying) {
         ssh->error = WS_REKEYING;
         return WS_REKEYING;
     }
@@ -1233,7 +1233,7 @@ int wolfSSH_extended_data_send(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ssh == NULL || buf == NULL || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
-    if (ssh->isKeying) {
+    if (ssh->keying) {
         ssh->error = WS_REKEYING;
         return WS_REKEYING;
     }
@@ -2416,14 +2416,14 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
             *channelId = ssh->lastRxId;
         }
 
-        if (ssh->isKeying) {
+        if (ssh->keying) {
             ssh->error = WS_REKEYING;
             return WS_REKEYING;
         }
     }
 
     if (ret == WS_CHAN_RXD) {
-        if (ssh->isKeying) {
+        if (ssh->keying) {
             ssh->error = WS_REKEYING;
             return WS_REKEYING;
         }

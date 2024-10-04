@@ -695,7 +695,8 @@ struct WOLFSSH {
     byte clientState;
     byte serverState;
     byte processReplyState;
-    byte isKeying;
+    byte keying:1;
+    byte peerKeying:1;
     byte authId;           /* if using public key or password */
     byte supportedAuth[3]; /* supported auth IDs public key , password */
 
