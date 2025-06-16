@@ -186,6 +186,7 @@ typedef enum WS_FwdCbAction {
     WOLFSSH_FWD_LOCAL_SETUP,
     WOLFSSH_FWD_LOCAL_CLEANUP,
     WOLFSSH_FWD_REMOTE_SETUP,
+    WOLFSSH_FWD_REMOTE_CONFIRM,
     WOLFSSH_FWD_REMOTE_CLEANUP,
     WOLFSSH_FWD_CHANNEL_ID,
 } WS_FwdCbAction;
@@ -264,6 +265,8 @@ WOLFSSH_API int wolfSSH_CTX_SetChannelCloseCb(WOLFSSH_CTX* ctx,
         WS_CallbackChannelClose cb);
 WOLFSSH_API int wolfSSH_SetChannelCloseCtx(WOLFSSH* ssh, void* ctx);
 WOLFSSH_API void* wolfSSH_GetChannelCloseCtx(WOLFSSH* ssh);
+
+WOLFSSH_API const char* wolfSSH_GetChannelType(WOLFSSH_CHANNEL* channel);
 
 WOLFSSH_API int wolfSSH_get_error(const WOLFSSH*);
 WOLFSSH_API const char* wolfSSH_get_error_name(const WOLFSSH*);
