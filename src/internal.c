@@ -638,6 +638,18 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 #ifndef NO_WOLFSSH_CLIENT
 INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 {
+    /* Is KEX complete? */
+    if (ssh->connectState < CONNECT_KEYED && ssh->handshake) {
+        /* If expecting a specific message, and didn't receive it, error. */
+        if (ssh->handshake->expectMsgId != MSGID_NONE) {
+            if (msg != ssh->handshake->expectMsgId) {
+                WLOG(WS_LOG_DEBUG, "Message ID %u not the expected message %u",
+                        msg, ssh->handshake->expectMsgId);
+                return 0;
+            }
+            ssh->handshake->expectMsgId = MSGID_NONE;
+        }
+    }
     /* Has client userauth started? */
     if (ssh->connectState < CONNECT_CLIENT_KEXDH_INIT_SENT) {
         if (msg >= MSGID_KEXDH_LIMIT) {
@@ -12523,6 +12535,11 @@ int SendKexDhGexRequest(WOLFSSH* ssh)
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
 
+    if (ret == WS_SUCCESS) {
+        WLOG_EXPECT_MSGID(MSGID_KEXDH_GEX_GROUP);
+        ssh->handshake->expectMsgId = MSGID_KEXDH_GEX_GROUP;
+    }
+
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhGexRequest(), ret = %d", ret);
     return ret;
 }
@@ -12611,6 +12628,7 @@ int SendKexDhInit(WOLFSSH* ssh)
 #endif
     int ret = WS_SUCCESS;
     byte msgId = MSGID_KEXDH_INIT;
+    byte expectMsgId = MSGID_KEXDH_REPLY;
     byte e[MAX_KEX_KEY_SZ+1]; /* plus 1 in case of padding. */
     word32 eSz = (word32)sizeof(e);
     byte  ePad = 0;
@@ -12662,6 +12680,7 @@ int SendKexDhInit(WOLFSSH* ssh)
             generator = ssh->handshake->generator;
             generatorSz = ssh->handshake->generatorSz;
             msgId = MSGID_KEXDH_GEX_INIT;
+            expectMsgId = MSGID_KEXDH_GEX_REPLY;
             break;
 #endif
 #ifndef WOLFSSH_NO_ECDH_SHA2_NISTP256
@@ -12872,6 +12891,11 @@ int SendKexDhInit(WOLFSSH* ssh)
 
     if (ret == WS_SUCCESS)
         ret = wolfSSH_SendPacket(ssh);
+
+    if (ret == WS_SUCCESS) {
+        WLOG_EXPECT_MSGID(expectMsgId);
+        ssh->handshake->expectMsgId = expectMsgId;
+    }
 
     WLOG(WS_LOG_DEBUG, "Leaving SendKexDhInit(), ret = %d", ret);
     return ret;

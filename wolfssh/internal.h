@@ -605,6 +605,7 @@ typedef struct Keys {
 
 
 typedef struct HandshakeInfo {
+    byte expectMsgId;
     byte kexId;
     byte kexIdGuess;
     byte kexHashId;
@@ -1178,6 +1179,7 @@ enum ProcessReplyStates {
 
 
 enum WS_MessageIds {
+    MSGID_NONE = 0,
     MSGID_DISCONNECT = 1,
     MSGID_IGNORE = 2,
     MSGID_UNIMPLEMENTED = 3,
