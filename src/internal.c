@@ -598,34 +598,43 @@ static void HandshakeInfoFree(HandshakeInfo* hs, void* heap)
 #ifndef NO_WOLFSSH_SERVER
 INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 {
+    /* Transport Layer Generic messages are always allowed. */
+    if (MSGIDLIMIT_TRANS_GEN(msg)) {
+        return 1;
+    }
+
     /* Has client userauth started? */
+    /* Allows the server to receive up to KEXDH GEX Request during KEX. */
     if (ssh->acceptState < ACCEPT_KEYED) {
-        if (msg > MSGID_KEXDH_LIMIT) {
+        if (msg > MSGID_KEXDH_GEX_REQUEST) {
             return 0;
         }
     }
     /* Is server userauth complete? */
     if (ssh->acceptState < ACCEPT_SERVER_USERAUTH_SENT) {
+        /* The server should only receive the user auth request message,
+         * it should not accept the other user auth messages, it sends
+         * them. (>50) */
         /* Explicitly check for messages not allowed before user
          * authentication has comleted. */
-        if (msg >= MSGID_USERAUTH_LIMIT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
-                    "before user authentication is complete", msg);
+        if (MSGIDLIMIT_POST_USERAUTH(msg)) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "before user authentication is complete");
             return 0;
         }
         /* Explicitly check for the user authentication messages that
          * only the server sends, it shouldn't receive them. */
-        if ((msg > MSGID_USERAUTH_RESTRICT) &&
+        if ((msg > MSGID_USERAUTH_REQUEST) &&
             (msg != MSGID_USERAUTH_INFO_RESPONSE)) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
-                    "during user authentication", msg);
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "during user authentication");
             return 0;
         }
     }
     else {
-        if (msg >= MSGID_USERAUTH_RESTRICT && msg < MSGID_USERAUTH_LIMIT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by server "
-                    "after user authentication", msg);
+        if (msg >= MSGID_USERAUTH_REQUEST && msg < MSGID_GLOBAL_REQUEST) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "server", "after user authentication");
             return 0;
         }
     }
@@ -638,6 +647,19 @@ INLINE static int IsMessageAllowedServer(WOLFSSH *ssh, byte msg)
 #ifndef NO_WOLFSSH_CLIENT
 INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
 {
+    /* Transport Layer Generic messages are always allowed. */
+    if (MSGIDLIMIT_TRANS_GEN(msg)) {
+        return 1;
+    }
+
+    /* The client should only send the user auth request message,
+     * it should not accept it. */
+    if (msg == MSGID_USERAUTH_REQUEST) {
+        WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                msg, "client", "ever");
+        return 0;
+    }
+
     /* Is KEX complete? */
     if (ssh->connectState < CONNECT_KEYED && ssh->handshake) {
         /* If expecting a specific message, and didn't receive it, error. */
@@ -648,35 +670,37 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
                 return 0;
             }
             ssh->handshake->expectMsgId = MSGID_NONE;
+            return 1;
         }
     }
     /* Has client userauth started? */
     if (ssh->connectState < CONNECT_CLIENT_KEXDH_INIT_SENT) {
-        if (msg >= MSGID_KEXDH_LIMIT) {
+        if (msg >= MSGID_KEXDH_GEX_REQUEST) {
             return 0;
         }
     }
     /* Is client userauth complete? */
     if (ssh->connectState < CONNECT_SERVER_USERAUTH_ACCEPT_DONE) {
-        /* Explicitly check for messages not allowed before user
-         * authentication has comleted. */
-        if (msg >= MSGID_USERAUTH_LIMIT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
-                    "before user authentication is complete", msg);
+        /* The endpoints should not allow message IDs greater than or
+         * equal to msgid 80 before user authentication is complete.
+         * Per RFC 4252 section 6. */
+        if (MSGIDLIMIT_POST_USERAUTH(msg)) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "client", "before user authentication is complete");
             return 0;
         }
-        /* Explicitly check for the user authentication message that
-         * only the client sends, it shouldn't receive it. */
-        if (msg == MSGID_USERAUTH_RESTRICT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
-                    "during user authentication", msg);
+        /* Explicitly check for the user authentication request message.
+         * The client only sends the message, it shouldn't receive it. */
+        if (msg == MSGID_USERAUTH_REQUEST) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "client", "during user authentication");
             return 0;
         }
     }
     else {
-        if (msg >= MSGID_USERAUTH_RESTRICT && msg < MSGID_USERAUTH_LIMIT) {
-            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by client "
-                    "after user authentication", msg);
+        if (MSGIDLIMIT_AUTH(msg)) {
+            WLOG(WS_LOG_DEBUG, "Message ID %u not allowed by %s %s",
+                    msg, "client", "after user authentication");
             return 0;
         }
     }
