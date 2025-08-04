@@ -76,6 +76,7 @@ WOLFSSH_API void wolfSSH_Log(enum wolfSSH_LogLevel,
                       if (wolfSSH_LogEnabled()) \
                           wolfSSH_Log(__VA_ARGS__); \
                   } while (0)
+#define WLOG_EXPECT_MSGID(x) WLOG(WS_LOG_DEBUG, "Expecting message %d", (x))
 
 
 #ifdef __cplusplus
