@@ -8943,7 +8943,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         else if (WSTRNCMP(type, "pty-req", typeSz) == 0) {
             char term[32];
             char* modes;
-            word32 termSz, modesSz;
+            word32 termSz, modesSz = 0;
             word32 widthChar, heightRows, widthPixels, heightPixels;
 
             channel->ptyReq = 1; /* recieved a pty request */
