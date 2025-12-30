@@ -2169,6 +2169,10 @@ static void* HandleConnection(void* arg)
                         wolfSSH_GetSessionCommand(ssh));
             }
         }
+        else {
+            wolfSSH_Log(WS_LOG_ERROR, "[SSHD] Unknown channel type");
+            ret = WS_INVALID_CHANTYPE;
+        }
     }
 
     error = wolfSSH_get_error(ssh);
