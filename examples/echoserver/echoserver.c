@@ -737,24 +737,25 @@ static int wsShellStartCb(WOLFSSH_CHANNEL* channel, void* ctx)
 #ifdef WOLFSSH_SFTP
 static int wsSubsysStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
 {
-    thread_ctx_t* threadCtx;
-    const char* cmd;
-    WS_SessionType type;
+    int rej = 1;
 
-    if (!vCtx || !channel) {
-        return 0;
+    if (vCtx && channel) {
+        thread_ctx_t* threadCtx;
+        const char* cmd;
+        WS_SessionType type;
+
+        threadCtx = (thread_ctx_t*)vCtx;
+        cmd = wolfSSH_ChannelGetSessionCommand(channel);
+        type = wolfSSH_ChannelGetSessionType(channel);
+
+        if (type == WOLFSSH_SESSION_SUBSYSTEM
+                && WSTRCMP(cmd, "sftp") == 0) {
+            threadCtx->doSftp = 1;
+            rej = 0;
+        }
     }
 
-    threadCtx = (thread_ctx_t*)vCtx;
-    cmd = wolfSSH_ChannelGetSessionCommand(channel);
-    type = wolfSSH_ChannelGetSessionType(channel);
-
-    if (type == WOLFSSH_SESSION_SUBSYSTEM
-            && WSTRCMP(cmd, "sftp") == 0) {
-        threadCtx->doSftp = 1;
-    }
-
-    return 0;
+    return rej;
 }
 #endif /* WOLFSSH_SFTP */
 
@@ -883,14 +884,6 @@ static void buf_dump(unsigned char *buf, int len)
     typedef void ES_HEAP_HINT;
 #endif
 
-
-#ifdef WOLFSSH_SHELL
-static void ChildSig(int sig)
-{
-    (void)sig;
-    ChildRunning = 0;
-}
-#endif
 
 static int ssh_worker(thread_ctx_t* threadCtx)
 {
@@ -1584,7 +1577,9 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
             break;
 
         case WS_SUCCESS:
+            fprintf(stderr, "\tXXX accept success\n");
             ret = ssh_worker(threadCtx);
+            fprintf(stderr, "\tXXX worker %d\n", ret);
             #ifdef WOLFSSH_SFTP
             if (ret == WS_SFTP_COMPLETE) {
                 do {

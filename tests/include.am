@@ -173,5 +173,8 @@ endif
 if BUILD_KEYBOARD_INTERACTIVE
 tests_kex_test_CPPFLAGS     += -DWOLFSSH_KEYBOARD_INTERACTIVE
 endif
+if BUILD_DEBUG
+tests_kex_test_CPPFLAGS     += -DDEBUG_WOLFSSH
+endif
 tests_kex_test_LDADD   = src/libwolfssh.la
 tests_kex_test_DEPENDENCIES = src/libwolfssh.la
