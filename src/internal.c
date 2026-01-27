@@ -192,6 +192,9 @@ static const char sshProtoIdStr[] = "SSH-2.0-wolfSSHv"
 static const char OpenSSH[] = "SSH-2.0-OpenSSH";
 
 
+__thread const char* sideName = "neither";
+
+
 const char* GetErrorString(int err)
 {
 #ifdef NO_WOLFSSH_STRINGS
@@ -1017,6 +1020,8 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
 
     if (heap)
         ctx->heap = heap;
+
+    sideName = (side == WOLFSSH_ENDPOINT_CLIENT) ? "client" : "server";
 
     ctx->side = side;
 #ifndef WOLFSSH_USER_IO
