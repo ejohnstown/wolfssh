@@ -62,6 +62,8 @@
     static int logEnable = 0;
 #endif
 
+extern __thread const char* sideName;
+
 
 /* turn debugging on if supported */
 void wolfSSH_Debugging_ON(void)
@@ -154,9 +156,9 @@ void DefaultLoggingCb(enum wolfSSH_LogLevel level, const char *const msgStr)
     }
 #endif /* WOLFSSH_NO_TIMESTAMP */
     #ifndef WOLFSSH_LOG_PRINTF
-    fprintf(stdout, "%s[%s] %s\r\n", timeStr, GetLogStr(level), msgStr);
+    fprintf(stdout, "%s: %s[%s] %s\r\n", sideName, timeStr, GetLogStr(level), msgStr);
     #else
-    printf("%s[%s] %s\r\n", timeStr, GetLogStr(level), msgStr);
+    printf("%s: %s[%s] %s\r\n", sideName, timeStr, GetLogStr(level), msgStr);
     #endif
 }
 #endif /* WOLFSSH_NO_DEFAULT_LOGGING_CB */
