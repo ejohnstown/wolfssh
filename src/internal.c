@@ -1844,6 +1844,22 @@ static int GetOpenSshPublicKey(WS_KeySignature *key,
 
 #endif /* WOLFSSH_TPM */
 
+static int GetKdfOptionsBcrypt(
+        word32* saltSz, const byte** salt, word32* rounds,
+        const byte* buf, word32 len, word32* idx)
+{
+    int ret;
+
+    ret = GetStringRef(saltSz, salt, buf, len, idx);
+
+    if (ret == WS_SUCCESS) {
+        ret = GetUint32(rounds, buf, len, idx);
+    }
+
+    return ret;
+}
+
+
 /*
  * Decodes an OpenSSH format key.
  */
@@ -1861,14 +1877,29 @@ static int GetOpenSshKey(WS_KeySignature *key,
 
     if (ret == WS_SUCCESS) {
         *idx += (word32)WSTRLEN(AuthMagic) + 1;
-        ret = GetSkip(buf, len, idx); /* ciphername */
+        ret = GetStringRef(&strSz, &str, buf, len, idx); /* ciphername */
+        printf("ciphername: %s (%u)\n", str, strSz);
     }
 
-    if (ret == WS_SUCCESS)
-        ret = GetSkip(buf, len, idx); /* kdfname */
+    if (ret == WS_SUCCESS) {
+        ret = GetStringRef(&strSz, &str, buf, len, idx); /* kdfname */
+        printf("kdfname: %s (%u)\n", str, strSz);
+    }
 
-    if (ret == WS_SUCCESS)
-        ret = GetSkip(buf, len, idx); /* kdfoptions */
+    if (ret == WS_SUCCESS) {
+        ret = GetStringRef(&strSz, &str, buf, len, idx); /* kdfoptions */
+        printf("kdfoptions: (%u)\n", strSz);
+        if (ret == WS_SUCCESS && strSz > 0) {
+            word32 rounds = 0, saltSz = 0, strIdx= 0;
+            const byte* salt = NULL;
+
+            ret = GetKdfOptionsBcrypt(&saltSz, &salt, &rounds,
+                    str, strSz, &strIdx);
+            printf("  rounds:%u\n  salt:(%u)\n", rounds, saltSz);
+            if (saltSz > 0 && salt != NULL)
+                DumpOctetString(salt, saltSz);
+        }
+    }
 
     if (ret == WS_SUCCESS)
         ret = GetUint32(&keyCount, buf, len, idx); /* key count */
@@ -2845,6 +2876,9 @@ static const NameIdPair NameIdMap[] = {
     { ID_CURVE_NISTP256, TYPE_OTHER, "nistp256" },
     { ID_CURVE_NISTP384, TYPE_OTHER, "nistp384" },
     { ID_CURVE_NISTP521, TYPE_OTHER, "nistp521" },
+
+    /* Key Derivation Function IDs */
+    { ID_KDF_BCRYPT, TYPE_OTHER, "bcrypt" },
 };
 
 
