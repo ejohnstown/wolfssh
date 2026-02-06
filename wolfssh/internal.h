@@ -600,6 +600,9 @@ enum {
     ID_CURVE_NISTP384,
     ID_CURVE_NISTP521,
 
+    /* Key Derivation Function IDs */
+    ID_KDF_BCRYPT,
+
     ID_UNKNOWN
 };
 

@@ -3926,6 +3926,9 @@ static const NameIdPair NameIdMap[] = {
     { ID_CURVE_NISTP256, TYPE_OTHER, "nistp256" },
     { ID_CURVE_NISTP384, TYPE_OTHER, "nistp384" },
     { ID_CURVE_NISTP521, TYPE_OTHER, "nistp521" },
+
+    /* Key Derivation Function IDs */
+    { ID_KDF_BCRYPT, TYPE_OTHER, "bcrypt" },
 };
 
 
