@@ -4,7 +4,7 @@
 #include <wolfssl/options.h>
 #endif
 #include <wolfssl/wolfcrypt/types.h>
-#include <wolfssh/visibility.h>
+#include <wolfssh/settings.h>
 
 #ifndef _WOLFSSH_BLOWFISH_H_
 #define _WOLFSSH_BLOWFISH_H_
@@ -20,6 +20,7 @@ typedef struct blf_ctx {
     word32 S[4][256],P[18];
 } blf_ctx;
 
+WOLFSSH_API void blf_init(blf_ctx *bc);
 WOLFSSH_API void blf_key_init(blf_ctx *bc, byte *key, int len);
 WOLFSSH_API void blf_key_cleanup(blf_ctx *bc);
 WOLFSSH_API void blf_enc(blf_ctx *bc, word32 *data, int blocks);

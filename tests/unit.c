@@ -46,6 +46,7 @@
  * and the Ed25519 tests do not need RSA. */
 #include <wolfssl/wolfcrypt/asn_public.h>
 #include <wolfssh/blowfish.h>
+#include <wolfssh/pbkdf-bcrypt.h>
 
 #define WOLFSSH_TEST_HEX2BIN
 #include <wolfssh/test.h>
@@ -1128,6 +1129,27 @@ static int test_Blowfish(void)
     return ret;
 }
 
+
+static int test_pbkdf_bcrypt(void)
+{
+    int ret;
+    const char pw[] = "correct horse battery staple";
+    const char salt[] = "saltsaltsaltsalt";
+    byte key[32] = { 0 };
+    word32 pwSz = (word32)WSTRLEN(pw);
+    word32 saltSz = (word32)WSTRLEN(salt);
+    word32 keySz = (word32)sizeof(key);
+
+    ret = wolfSSH_pbkdf_bcrypt(
+            (const byte*)pw, pwSz,
+            (const byte*)salt, saltSz, 666,
+            key, keySz);
+    if (ret) {
+        fprintf(stderr, "pbkdf_bcrypt failed\n");
+    }
+
+    return 0;
+}
 
 /* Key Generation Unit Test */
 
@@ -22728,6 +22750,10 @@ int wolfSSH_UnitTest(int argc, char** argv)
 
     unitResult = test_Blowfish();
     printf("Blowfish: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_pbkdf_bcrypt();
+    printf("pbkdf-bcrypt: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
     unitResult = test_KDF();

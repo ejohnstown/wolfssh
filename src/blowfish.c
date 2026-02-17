@@ -289,7 +289,17 @@ static const word32 ks3[] = {
     0xb74e6132, 0xce77e25b, 0x578fdfe3, 0x3ac372e6,
 };
 
-static void Blowfish_initialize(blf_ctx *bc, byte *key, int keybytes)
+static void Blowfish_initialize(blf_ctx *bc)
+{
+    /* Initialize S-boxes without file read. */
+    WMEMCPY(bc->P, p, sizeof(p));
+    WMEMCPY(bc->S[0], ks0, sizeof(ks0));
+    WMEMCPY(bc->S[1], ks1, sizeof(ks1));
+    WMEMCPY(bc->S[2], ks2, sizeof(ks2));
+    WMEMCPY(bc->S[3], ks3, sizeof(ks3));
+}
+
+static void Blowfish_setkey(blf_ctx *bc, byte *key, int keybytes)
 {
     int i;
     int j;
@@ -298,12 +308,7 @@ static void Blowfish_initialize(blf_ctx *bc, byte *key, int keybytes)
     word32 datal;
     word32 datar;
 
-    /* Initialize S-boxes without file read. */
-    WMEMCPY(bc->P, p, sizeof(p));
-    WMEMCPY(bc->S[0], ks0, sizeof(ks0));
-    WMEMCPY(bc->S[1], ks1, sizeof(ks1));
-    WMEMCPY(bc->S[2], ks2, sizeof(ks2));
-    WMEMCPY(bc->S[3], ks3, sizeof(ks3));
+    blf_init(bc);
 
     j = 0;
     for (i = 0; i < N + 2; ++i) {
@@ -336,9 +341,15 @@ static void Blowfish_initialize(blf_ctx *bc, byte *key, int keybytes)
     }
 }
 
+void blf_init(blf_ctx *bc)
+{
+    Blowfish_initialize(bc);
+}
+
 void blf_key_init(blf_ctx *bc, byte *key, int len)
 {
-    Blowfish_initialize(bc, key, len);
+    Blowfish_initialize(bc);
+    Blowfish_setkey(bc, key, len);
 }
 
 void blf_key_cleanup(blf_ctx *bc)

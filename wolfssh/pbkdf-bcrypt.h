@@ -4,7 +4,7 @@
 #include <wolfssl/options.h>
 #endif
 #include <wolfssl/wolfcrypt/types.h>
-#include <wolfssh/visibility.h>
+#include <wolfssh/settings.h>
 
 #ifndef _WOLFSSH_PBKDF_BCRYPT_H_
 #define _WOLFSSH_PBKDF_BCRYPT_H_
@@ -15,8 +15,8 @@ extern "C" {
 
 
 WOLFSSH_API int wolfSSH_pbkdf_bcrypt(
-        const char* pw, word32 pwSz,
-        const char* salt, word32 saltSz,
+        const byte* pw, word32 pwSz,
+        const byte* salt, word32 saltSz,
         word32 rounds,
         byte* key, word32 keySz);
 
