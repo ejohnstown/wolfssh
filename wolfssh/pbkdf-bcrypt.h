@@ -1,3 +1,6 @@
+#ifndef _WOLFSSH_PBKDF_BCRYPT_H_
+#define _WOLFSSH_PBKDF_BCRYPT_H_
+
 #ifdef WOLFSSL_USER_SETTINGS
 #include <wolfssl/wolfcrypt/settings.h>
 #else
@@ -5,9 +8,6 @@
 #endif
 #include <wolfssl/wolfcrypt/types.h>
 #include <wolfssh/settings.h>
-
-#ifndef _WOLFSSH_PBKDF_BCRYPT_H_
-#define _WOLFSSH_PBKDF_BCRYPT_H_
 
 #ifdef __cplusplus
 extern "C" {

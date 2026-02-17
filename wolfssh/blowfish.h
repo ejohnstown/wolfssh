@@ -1,3 +1,6 @@
+#ifndef _WOLFSSH_BLOWFISH_H_
+#define _WOLFSSH_BLOWFISH_H_
+
 #ifdef WOLFSSL_USER_SETTINGS
 #include <wolfssl/wolfcrypt/settings.h>
 #else
@@ -5,9 +8,6 @@
 #endif
 #include <wolfssl/wolfcrypt/types.h>
 #include <wolfssh/settings.h>
-
-#ifndef _WOLFSSH_BLOWFISH_H_
-#define _WOLFSSH_BLOWFISH_H_
 
 #define KEYBYTES     8
 #define MAXKEYBYTES 56          /* 448 bits */

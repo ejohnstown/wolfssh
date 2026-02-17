@@ -8,6 +8,7 @@
 #include <wolfssl/options.h>
 #endif
 
+#include <stdio.h>
 
 #include <wolfssh/error.h>
 #include <wolfssh/blowfish.h>
@@ -27,16 +28,75 @@
 
 static void expand_key_full(const word32* pw, const word32* salt, blf_ctx* ctx)
 {
-    WOLFSSH_UNUSED(pw);
-    WOLFSSH_UNUSED(salt);
-    WOLFSSH_UNUSED(ctx);
+    word32 i;
+    word32 datal;
+    word32 datar;
+    word32 saltIdx;
+
+    /* XOR password into P-array */
+    for (i = 0; i < 18; i++) {
+        ctx->P[i] ^= pw[i % 16];
+    }
+
+    /* Encrypt P-array using salt as data */
+    saltIdx = 0;
+    for (i = 0; i < 18; i += 2) {
+        datal = salt[saltIdx % 16];
+        datar = salt[(saltIdx + 1) % 16];
+        saltIdx += 2;
+
+        Blowfish_encipher(ctx, &datal, &datar);
+
+        ctx->P[i] = datal;
+        ctx->P[i + 1] = datar;
+    }
+
+    /* Encrypt S-boxes using salt as data */
+    for (i = 0; i < 4; i++) {
+        word32 j;
+        for (j = 0; j < 256; j += 2) {
+            datal = salt[saltIdx % 16];
+            datar = salt[(saltIdx + 1) % 16];
+            saltIdx += 2;
+
+            Blowfish_encipher(ctx, &datal, &datar);
+
+            ctx->S[i][j] = datal;
+            ctx->S[i][j + 1] = datar;
+        }
+    }
 }
 
 
 static void expand_key_part(const word32* part, blf_ctx* ctx)
 {
-    WOLFSSH_UNUSED(part);
-    WOLFSSH_UNUSED(ctx);
+    word32 i;
+    word32 datal;
+    word32 datar;
+
+    /* XOR part into P-array */
+    for (i = 0; i < 18; i++) {
+        ctx->P[i] ^= part[i % 16];
+    }
+
+    /* Re-encrypt P-array using current state */
+    datal = 0;
+    datar = 0;
+    for (i = 0; i < 18; i += 2) {
+        Blowfish_encipher(ctx, &datal, &datar);
+        ctx->P[i] = datal;
+        ctx->P[i + 1] = datar;
+    }
+
+    /* Re-encrypt S-boxes using current state */
+    for (i = 0; i < 4; i++) {
+        word32 j;
+        for (j = 0; j < 256; j += 2) {
+            Blowfish_encipher(ctx, &datal, &datar);
+            ctx->S[i][j] = datal;
+            ctx->S[i][j + 1] = datar;
+        }
+    }
 }
 
 
@@ -94,14 +154,21 @@ int wolfSSH_pbkdf_bcrypt(const byte* pw, word32 pwSz,
     }
 
     {
-        byte c[32] = "OxychromaticBlowfishSwatDynamite";
+        byte cStr[32] = "OxychromaticBlowfishSwatDynamite";
+        word32 c[8];
         word32 i;
 
-        for (i = 0; i < 64; i++) {
-            blf_enc(&ctx, (word32*)c, 1);
+        for (i = 0; i < 8; i++) {
+            ato32(cStr + (i * 4), c + i);
         }
 
-        WMEMCPY(key, c, sizeof(c));
+        for (i = 0; i < 64; i++) {
+            blf_enc(&ctx, c, 4);
+        }
+
+        for (i = 0; i < 8; i++) {
+            c32toa(c[i], key + (i * 4));
+        }
     }
 
     blf_key_cleanup(&ctx);
