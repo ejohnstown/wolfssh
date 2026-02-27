@@ -818,8 +818,10 @@ int wolfSSH_connect(WOLFSSH* ssh)
                 ssh->error = SendKexDhGexRequest(ssh);
 #endif
             }
-            else
+            else {
+                printf("\n\nsending kexDhInit here\n\n");
                 ssh->error = SendKexDhInit(ssh);
+            }
             if (ssh->error < WS_SUCCESS) {
                 WLOG(WS_LOG_DEBUG, connectError,
                      "SERVER_KEXINIT_DONE", ssh->error);

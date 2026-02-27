@@ -4235,6 +4235,7 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
     word32 skipSz = 0;
     word32 begin;
 
+    printf("\n\nDoKexInit\n\n");
     WLOG(WS_LOG_DEBUG, "Entering DoKexInit()");
 
     if (ssh == NULL || ssh->ctx == NULL ||
@@ -6311,12 +6312,24 @@ static int DoKexDhGexGroup(WOLFSSH* ssh,
         ssh->handshake->generatorSz = generatorSz;
 
         *idx = begin;
+                printf("\n\nsending kexDhInit What?\n\n");
+
         ret = SendKexDhInit(ssh);
     }
 
     return ret;
 }
-#endif
+#else /* WOLFSSH_NO_DH_GEX_SHA256 */
+static int DoKexDhGexRequest(WOLFSSH* ssh,
+                             byte* buf, word32 len, word32* idx)
+{
+    WOLFSSH_UNUSED(ssh);
+    WOLFSSH_UNUSED(buf);
+    WOLFSSH_UNUSED(len);
+    WOLFSSH_UNUSED(idx);
+    return WS_UNIMPLEMENTED_E:
+}
+#endif /* WOLFSSH_NO_DH_GEX_SHA256 */
 
 
 static int DoIgnore(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
@@ -9685,8 +9698,10 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
                     ssh->error = SendKexDhGexRequest(ssh);
 #endif
                 }
-                else
+                else {
+                    printf("\n\nsending kexDhInit there\n\n");
                     ssh->error = SendKexDhInit(ssh);
+                }
             }
             break;
 
@@ -10762,6 +10777,7 @@ int SendKexInit(WOLFSSH* ssh)
 
     int ret = WS_SUCCESS;
 
+    printf("\n\nSendKexInit\n\n");
     WLOG(WS_LOG_DEBUG, "Entering SendKexInit()");
 
     if (ssh == NULL)
@@ -13072,6 +13088,7 @@ int SendKexDhInit(WOLFSSH* ssh)
     word32 eSz = (word32)sizeof(e);
     byte  ePad = 0;
 
+    printf("\n\n send KexDhInit\n\n");
     WLOG(WS_LOG_DEBUG, "Entering SendKexDhInit()");
 
     switch (ssh->handshake->kexId) {
