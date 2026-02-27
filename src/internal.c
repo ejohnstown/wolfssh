@@ -943,7 +943,7 @@ static const char cannedKeyAlgoNames[] =
     "rsa-sha2-256,"
 #endif/* WOLFSSH_NO_RSA_SHA2_256 */
 #ifndef WOLFSSH_NO_RSA_SHA2_512
-    "rsa-sha2-512",
+    "rsa-sha2-512,"
 #endif /* WOLFSSH_NO_RSA_SHA2_512 */
 #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP256
     "ecdsa-sha2-nistp256,"
@@ -10571,6 +10571,7 @@ static int BundlePacket(WOLFSSH* ssh)
          * written into the buffer. packetStartIdx is before the
          * LENGTH and PAD_LENGTH, subtract those out, as well. */
         payloadSz = idx - ssh->packetStartIdx - LENGTH_SZ - PAD_LENGTH_SZ;
+        DumpOctetString(output, payloadSz);
 
         /* Minimum value for paddingSz is 4. */
         paddingSz = ssh->blockSz -
@@ -14146,6 +14147,7 @@ static int BuildUserAuthRequestRsa(WOLFSSH* ssh,
             byte encDigest[MAX_ENCODED_SIG_SZ];
             int encDigestSz;
 
+            fprintf(stderr, "\n\n\nYYY: keySigId %s\n\n\n", IdToName(keySig->keySigId));
             switch (keySig->keySigId) {
                 #ifndef WOLFSSH_NO_SSH_RSA_SHA1
                 case ID_SSH_RSA:
@@ -15223,6 +15225,7 @@ static int BuildUserAuthRequestPublicKey(WOLFSSH* ssh,
             WLOG(WS_LOG_DEBUG, "User signature type: %s",
                     IdToName(keySig->keySigId));
 
+            fprintf(stderr, "\n\n\nXXX: keySigId %s %s\n\n\n", IdToName(keySig->keySigId), keySig->name);
             switch (keySig->keySigId) {
                 #ifndef WOLFSSH_NO_RSA
                 case ID_SSH_RSA:

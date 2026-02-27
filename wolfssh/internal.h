@@ -73,16 +73,6 @@ extern "C" {
 
 
 /*
- * Not ready for rsa-sha2-512 yet.
- */
-
-#undef WOLFSSH_NO_RSA_SHA2_512
-#ifndef WOLFSSH_YES_RSA_SHA2_512
-    #define WOLFSSH_NO_RSA_SHA2_512
-#endif
-
-
-/*
  * Check options set by wolfSSL and set wolfSSH options as appropriate. If
  * the derived options and any override options leave wolfSSH without
  * at least one algorithm to use, throw an error.
