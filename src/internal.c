@@ -8746,6 +8746,12 @@ static int DoChannelOpenConf(WOLFSSH* ssh,
     if (ret == WS_SUCCESS) {
         ssh->serverState = SERVER_CHANNEL_OPEN_DONE;
         ssh->defaultPeerChannelId = peerChannelId;
+#ifdef WOLFSSH_FWD
+        if (ssh->ctx->fwdCb) {
+            ret = ssh->ctx->fwdCb(WOLFSSH_FWD_REMOTE_CONFIRM,
+                    ssh->fwdCbCtx, NULL, 0);
+        }
+#endif /* WOLFSSH_FWD */
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving DoChannelOpenConf(), ret = %d", ret);
@@ -9224,6 +9230,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             WLOG(WS_LOG_DEBUG, "  %s = %s", name, value);
         }
         else if (WSTRNCMP(type, "shell", typeSz) == 0) {
+            rej = 1;
             channel->sessionType = WOLFSSH_SESSION_SHELL;
             if (ssh->ctx->channelReqShellCb) {
                 rej = ssh->ctx->channelReqShellCb(channel, ssh->channelReqCtx);
@@ -9231,6 +9238,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             ssh->clientState = CLIENT_DONE;
         }
         else if (WSTRNCMP(type, "exec", typeSz) == 0) {
+            rej = 1;
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_EXEC;
@@ -9242,6 +9250,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
             WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
         }
         else if (WSTRNCMP(type, "subsystem", typeSz) == 0) {
+            rej = 1;
             ret = GetStringAlloc(ssh->ctx->heap, &channel->command, NULL,
                     buf, len, &begin);
             channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
