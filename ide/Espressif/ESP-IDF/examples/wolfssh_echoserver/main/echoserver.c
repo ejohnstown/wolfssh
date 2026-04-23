@@ -1082,6 +1082,9 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                         #endif
                         continue;
                     }
+                    else if (rc == WS_EOF) {
+                        continue;
+                    }
                     else if (rc != WS_WANT_READ) {
                         #ifdef SHELL_DEBUG
                             printf("Break:read sshFd returns %d: errno =%x\n",
@@ -1585,7 +1588,7 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
                 error = wolfSSH_get_error(threadCtx->ssh);
 
                 /* peer succesfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED) {
+                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
                     ret = 0;
                     break;
                 }

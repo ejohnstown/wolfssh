@@ -639,7 +639,8 @@ THREAD_RETURN WOLFSSH_THREAD portfwd_worker(void* args)
             ret = wolfSSH_worker(ssh, NULL);
             if (ret != WS_SUCCESS && ret != WS_CHAN_RXD &&
                     ret != WS_WANT_READ && ret != WS_WANT_WRITE &&
-                    ret != WS_WINDOW_FULL && ret != WS_REKEYING)
+                    ret != WS_WINDOW_FULL && ret != WS_REKEYING &&
+                    ret != WS_EOF)
                 err_sys("Couldn't get the remote forward reply.");
         }
         if (!fwdState.replied)

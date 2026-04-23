@@ -1146,7 +1146,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
      * response to SendChannelClose */
     if (channel != NULL && ret == WS_SUCCESS) {
         ret = wolfSSH_worker(ssh, NULL);
-        if (ret == WS_CHAN_RXD) {
+        if (ret == WS_CHAN_RXD || ret == WS_EOF) {
             /* received response */
             ret = WS_SUCCESS;
         }
@@ -1183,6 +1183,7 @@ int wolfSSH_TriggerKeyExchange(WOLFSSH* ssh)
 int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
 {
     WOLFSSH_BUFFER* inputBuffer;
+    word32 avail;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_peek()");
 
@@ -1193,17 +1194,21 @@ int wolfSSH_stream_peek(WOLFSSH* ssh, byte* buf, word32 bufSz)
         ssh->error = WS_REKEYING;
         return WS_REKEYING;
     }
-    if (ssh->channelList->eofRxd) {
+
+    inputBuffer = &ssh->channelList->inputBuffer;
+    avail = inputBuffer->length - inputBuffer->idx;
+
+    /* Report the EOF only once the buffered data is drained. */
+    if (avail == 0 && ssh->channelList->eofRxd) {
         ssh->error = WS_EOF;
         return WS_ERROR;
     }
 
-    inputBuffer = &ssh->channelList->inputBuffer;
-    bufSz = min(bufSz, inputBuffer->length - inputBuffer->idx);
+    bufSz = min(bufSz, avail);
     if (buf != NULL) {
         WMEMCPY(buf, inputBuffer->buffer + inputBuffer->idx, bufSz);
     }
-    return bufSz;
+    return (int)bufSz;
 }
 
 
@@ -1231,7 +1236,11 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
     if (ssh == NULL || buf == NULL || bufSz == 0 || ssh->channelList == NULL)
         return WS_BAD_ARGUMENT;
 
-    if (ssh->channelList->eofRxd) {
+    inputBuffer = &ssh->channelList->inputBuffer;
+
+    /* Report the EOF only once the buffered data is drained. */
+    if (inputBuffer->length - inputBuffer->idx == 0
+            && ssh->channelList->eofRxd) {
         ssh->error = WS_EOF;
         return WS_ERROR;
     }
@@ -1241,7 +1250,6 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
         return WS_FATAL_ERROR;
     }
 
-    inputBuffer = &ssh->channelList->inputBuffer;
     ssh->error = WS_SUCCESS;
 
     if (ret == WS_SUCCESS) {
@@ -1252,7 +1260,13 @@ int wolfSSH_stream_read(WOLFSSH* ssh, byte* buf, word32 bufSz)
                     "Starting to receive data at current index of %u",
                     inputBuffer->idx);
             ret = DoReceive(ssh);
-            if (ssh->channelList == NULL || ssh->channelList->eofRxd)
+            /* An EOF ends the read only with nothing buffered. Off the
+             * current head: DoReceive() may have removed inputBuffer's
+             * channel. */
+            if (ssh->channelList == NULL
+                    || (ssh->channelList->eofRxd
+                        && ssh->channelList->inputBuffer.length
+                           - ssh->channelList->inputBuffer.idx == 0))
                 ret = WS_EOF;
             if (ret == WS_EXTDATA &&
                     ssh->lastRxId != ssh->channelList->channel) {
@@ -1390,6 +1404,23 @@ int wolfSSH_ChannelIdSendExt(WOLFSSH* ssh, word32 channelId,
     }
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelIdSendExt(), txd = %d", ret);
+    return ret;
+}
+
+
+int wolfSSH_stream_send_eof(WOLFSSH* ssh)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_stream_send_eof()");
+
+    if (ssh == NULL || ssh->channelList == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelEof(ssh, ssh->channelList->peerChannel);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_stream_send_eof(), ret = %d", ret);
     return ret;
 }
 
@@ -3413,7 +3444,8 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
 
     /* If receive only wanted read or delivered channel data, still try to
      * flush any pending outbound packets. */
-    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD) {
+    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD
+            || ret == WS_EOF) {
         int sendRet = WS_SUCCESS;
 
         if (ssh->outputBuffer.length != 0)
@@ -3423,7 +3455,8 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
          * up potential window-adjusts and then return the send status. */
         if (sendRet == WS_WANT_WRITE || sendRet == WS_WINDOW_FULL) {
             int recv2 = DoReceive(ssh);
-            if (recv2 == WS_SUCCESS || recv2 == WS_WANT_READ || recv2 == WS_CHAN_RXD)
+            if (recv2 == WS_SUCCESS || recv2 == WS_WANT_READ || recv2 == WS_CHAN_RXD
+                    || recv2 == WS_EOF)
                 ret = sendRet;
             else
                 ret = recv2;
@@ -3437,16 +3470,17 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
     }
 #endif /* WOLFSSH_TEST_BLOCK */
 
-    /* WS_EXTDATA reports the channel too, so a multi-channel caller can route
-     * the drain to wolfSSH_ChannelIdReadExt(). */
-    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA) {
+    /* WS_EXTDATA and WS_EOF report the channel too, so a multi-channel caller
+     * can route the drain, or see which channel half-closed. */
+    if (ret == WS_SUCCESS || ret == WS_CHAN_RXD || ret == WS_EXTDATA
+            || ret == WS_EOF) {
         if (channelId != NULL) {
             *channelId = ssh->lastRxId;
         }
 
-        /* WS_EXTDATA is raised once, on arrival; masking it would strand the
-         * buffered stderr and its window credit. */
-        if (ssh->isKeying && ret != WS_EXTDATA) {
+        /* WS_EXTDATA and WS_EOF are raised once, on arrival; masking either
+         * strands the event, and the stderr window credit with it. */
+        if (ssh->isKeying && ret != WS_EXTDATA && ret != WS_EOF) {
             ssh->error = WS_REKEYING;
             return WS_REKEYING;
         }
@@ -4057,6 +4091,23 @@ int wolfSSH_ChannelExit(WOLFSSH_CHANNEL* channel)
                 channel->peerChannel, WS_CHANNEL_ID_PEER);
 
     WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelExit(), ret = %d", ret);
+    return ret;
+}
+
+
+int wolfSSH_ChannelSendEof(WOLFSSH_CHANNEL* channel)
+{
+    int ret = WS_SUCCESS;
+
+    WLOG(WS_LOG_DEBUG, "Entering wolfSSH_ChannelSendEof()");
+
+    if (channel == NULL)
+        ret = WS_BAD_ARGUMENT;
+
+    if (ret == WS_SUCCESS)
+        ret = SendChannelEof(channel->ssh, channel->peerChannel);
+
+    WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_ChannelSendEof(), ret = %d", ret);
     return ret;
 }
 

@@ -5495,6 +5495,57 @@ static word32 BuildExtDataStderrPacket(byte* pkt, word32 channelId, byte fill)
     return i;                                 /* 32 */
 }
 
+/* Builds a plaintext CHANNEL_DATA packet for channelId carrying 10 bytes of
+ * fill into pkt (needs 32 bytes), returning its size. Same plaintext-session
+ * reasoning as BuildExtDataStderrPacket().
+ *
+ * Layout: [len=28][pad=8][msgid=94][chan][dataSz=10][data*10][pad*8]. */
+static word32 BuildChannelDataPacket(byte* pkt, word32 channelId, byte fill)
+{
+    word32 i = 0;
+
+    /* packet_length = padLen(1) + msgid(1) + chan(4) + dataSz(4) + data(10)
+     *               + padding(8) = 28. */
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x1C;
+    pkt[i++] = 0x08;                          /* padding length */
+    pkt[i++] = MSGID_CHANNEL_DATA;
+
+    pkt[i++] = (byte)((channelId >> 24) & 0xFF);
+    pkt[i++] = (byte)((channelId >> 16) & 0xFF);
+    pkt[i++] = (byte)((channelId >>  8) & 0xFF);
+    pkt[i++] = (byte)( channelId        & 0xFF);
+
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x0A; /* 10 */
+
+    WMEMSET(pkt + i, fill, 10); i += 10;
+    WMEMSET(pkt + i, 0x00, 8);  i += 8;       /* padding bytes */
+
+    return i;                                 /* 32 */
+}
+
+/* Builds a plaintext CHANNEL_EOF packet for channelId into pkt (needs 16
+ * bytes), returning its size.
+ *
+ * Layout: [len=12][pad=6][msgid=96][chan][pad*6]. */
+static word32 BuildChannelEofPacket(byte* pkt, word32 channelId)
+{
+    word32 i = 0;
+
+    /* packet_length = padLen(1) + msgid(1) + chan(4) + padding(6) = 12. */
+    pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x00; pkt[i++] = 0x0C;
+    pkt[i++] = 0x06;                          /* padding length */
+    pkt[i++] = MSGID_CHANNEL_EOF;
+
+    pkt[i++] = (byte)((channelId >> 24) & 0xFF);
+    pkt[i++] = (byte)((channelId >> 16) & 0xFF);
+    pkt[i++] = (byte)((channelId >>  8) & 0xFF);
+    pkt[i++] = (byte)( channelId        & 0xFF);
+
+    WMEMSET(pkt + i, 0x00, 6); i += 6;        /* padding bytes */
+
+    return i;                                 /* 16 */
+}
+
 /* Integration (M-3): a peer sending stderr on a channel that is not the head of
  * the channel list must not surface as stream data. wolfSSH_stream_read() reads
  * the head channel only; when DoReceive() returns WS_EXTDATA for another
@@ -5960,7 +6011,224 @@ done:
     return result;
 }
 
+/* A received SSH_MSG_CHANNEL_EOF is a notification, not a command to answer in
+ * kind: echoing it sets our eofTxd, and SendChannelData() refuses to send once
+ * that is set. RFC 4254 section 5.3 closes each direction independently.
+ *
+ * Covers the read side too: data buffered ahead of the EOF is still owed to
+ * the caller, so the EOF is reported only once that buffer is drained. */
+static int test_ChannelEofHalfClose(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    int              i;
+    word32           reportedId = 0xFFFFFFFF;
+    word32           pktSz;
+    byte             pkt[48];
+    byte             out[32];
+    byte             payload[4] = { 0x10, 0x11, 0x12, 0x13 };
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    if (ctx == NULL)
+        return -1470;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    wolfSSH_SetIORecv(ctx, PacketIoRecv);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1471; goto done; }
+    ssh->acceptState = ACCEPT_SERVER_USERAUTH_SENT;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION, 1024, 1024);
+    if (ch == NULL) { result = -1472; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1473;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    /* The peer sends its last data and then stops talking, back to back. */
+    pktSz = BuildChannelDataPacket(pkt, ch->channel, 0x44);
+    pktSz += BuildChannelEofPacket(pkt + pktSz, ch->channel);
+    s_recvPkt = pkt;
+    s_recvPktSz = pktSz;
+    s_recvPktOff = 0;
+
+    ret = wolfSSH_worker(ssh, &reportedId);
+    if (ret != WS_CHAN_RXD) { result = -1474; goto done; }
+    if (reportedId != ch->channel) { result = -1475; goto done; }
+
+    reportedId = 0xFFFFFFFF;
+    ret = wolfSSH_worker(ssh, &reportedId);
+    if (ret != WS_EOF) { result = -1476; goto done; }
+    /* The caller must be able to tell which channel half-closed. */
+    if (reportedId != ch->channel) { result = -1477; goto done; }
+    if (!ch->eofRxd) { result = -1478; goto done; }
+    /* No auto-echo: our sending direction is untouched. */
+    if (ch->eofTxd) { result = -1479; goto done; }
+
+    /* The data that arrived ahead of the EOF is still deliverable. */
+    ret = wolfSSH_stream_peek(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1480; goto done; }
+
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret != 10) { result = -1481; goto done; }
+    for (i = 0; i < 10; i++)
+        if (out[i] != 0x44) { result = -1482; goto done; }
+
+    /* Drained: the reader now sees the EOF. */
+    ret = wolfSSH_stream_read(ssh, out, (word32)sizeof(out));
+    if (ret != WS_ERROR) { result = -1483; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_EOF) { result = -1484; goto done; }
+
+    ret = wolfSSH_stream_peek(ssh, out, (word32)sizeof(out));
+    if (ret != WS_ERROR) { result = -1485; goto done; }
+    if (wolfSSH_get_error(ssh) != WS_EOF) { result = -1486; goto done; }
+
+    /* Half-closed one way: we can still answer the peer. */
+    ret = wolfSSH_stream_send(ssh, payload, (word32)sizeof(payload));
+    if (ret != (int)sizeof(payload)) { result = -1487; goto done; }
+
+done:
+    s_recvPkt = NULL;
+    s_recvPktSz = 0;
+    s_recvPktOff = 0;
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
 #endif /* NO_WOLFSSH_SERVER */
+
+/* wolfSSH_stream_send_eof() and wolfSSH_ChannelSendEof() close the
+ * application's own sending direction. Sends afterwards must fail, reads must
+ * not, and a second call must not put a second EOF on the wire. */
+static int test_SendEofApi(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           queued;
+    byte             buf[4] = { 0x00, 0x01, 0x02, 0x03 };
+
+    if (wolfSSH_stream_send_eof(NULL) != WS_BAD_ARGUMENT)
+        return -1490;
+    if (wolfSSH_ChannelSendEof(NULL) != WS_BAD_ARGUMENT)
+        return -1491;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1492;
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1493; goto done; }
+    /* Connection-protocol messages are only allowed once userauth is done. */
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    /* No channel yet: nothing to half-close. */
+    if (wolfSSH_stream_send_eof(ssh) != WS_BAD_ARGUMENT) {
+        result = -1494;
+        goto done;
+    }
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1495; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1496;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+    ch->peerWindowSz = 1024;
+    ch->peerMaxPacketSz = 1024;
+
+    ret = wolfSSH_stream_send(ssh, buf, (word32)sizeof(buf));
+    if (ret != (int)sizeof(buf)) { result = -1497; goto done; }
+
+    ret = wolfSSH_stream_send_eof(ssh);
+    if (ret != WS_SUCCESS) { result = -1498; goto done; }
+    if (!ch->eofTxd) { result = -1499; goto done; }
+
+    /* Our direction is closed. */
+    ret = wolfSSH_stream_send(ssh, buf, (word32)sizeof(buf));
+    if (ret != WS_EOF) { result = -1500; goto done; }
+
+    /* Idempotent: nothing new is queued for the peer. */
+    queued = ssh->outputBuffer.length;
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_SUCCESS) { result = -1501; goto done; }
+    if (ssh->outputBuffer.length != queued) { result = -1502; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
+
+/* A bundled but unflushed EOF is committed: the bytes are in the output
+ * buffer and go out on the next flush. The WS_WANT_WRITE retry an application
+ * makes must not queue a second EOF behind the first. */
+static int test_SendChannelEofWantWrite(void)
+{
+    WOLFSSH_CTX*     ctx = NULL;
+    WOLFSSH*         ssh = NULL;
+    WOLFSSH_CHANNEL* ch  = NULL;
+    int              result = 0;
+    int              ret;
+    word32           queued;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_CLIENT, NULL);
+    if (ctx == NULL)
+        return -1510;
+    wolfSSH_SetIOSend(ctx, WantWriteIoSend);
+
+    ssh = wolfSSH_new(ctx);
+    if (ssh == NULL) { result = -1511; goto done; }
+    /* Connection-protocol messages are only allowed once userauth is done. */
+    ssh->connectState = CONNECT_SERVER_USERAUTH_ACCEPT_DONE;
+
+    ch = ChannelNew(ssh, ID_CHANTYPE_SESSION,
+                    DEFAULT_WINDOW_SZ, DEFAULT_MAX_PACKET_SZ);
+    if (ch == NULL) { result = -1512; goto done; }
+    if (ChannelAppend(ssh, ch) != WS_SUCCESS) {
+        ChannelDelete(ch, ssh->ctx->heap);
+        result = -1513;
+        goto done;
+    }
+    ch->openConfirmed = 1;
+
+    /* The socket will not take it, but the packet is built and buffered. */
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_WANT_WRITE) { result = -1514; goto done; }
+    if (!ch->eofTxd) { result = -1515; goto done; }
+    queued = ssh->outputBuffer.length;
+    if (queued == 0) { result = -1516; goto done; }
+
+    /* The retry an application makes on WS_WANT_WRITE. */
+    ret = wolfSSH_ChannelSendEof(ch);
+    if (ret != WS_SUCCESS) { result = -1517; goto done; }
+    if (ssh->outputBuffer.length != queued) { result = -1518; goto done; }
+
+    /* One EOF goes out, and the buffer empties. */
+    wolfSSH_SetIOSend(ctx, DiscardIoSend);
+    ret = wolfSSH_SendPacket(ssh);
+    if (ret != WS_SUCCESS) { result = -1519; goto done; }
+    if (ssh->outputBuffer.length != 0) { result = -1520; goto done; }
+
+done:
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+    return result;
+}
 
 static int test_SendChannelData_eofTxd(void)
 {
@@ -16389,7 +16657,21 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 
+    unitResult = test_ChannelEofHalfClose();
+    printf("ChannelEofHalfClose: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
 #endif /* NO_WOLFSSH_SERVER */
+
+    unitResult = test_SendEofApi();
+    printf("SendEofApi: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
+
+    unitResult = test_SendChannelEofWantWrite();
+    printf("SendChannelEofWantWrite: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 
     unitResult = test_SendChannelData_eofTxd();
     printf("SendChannelData_eofTxd: %s\n", (unitResult == 0 ? "SUCCESS" : "FAILED"));

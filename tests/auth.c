@@ -2022,7 +2022,7 @@ static void test_client(void)
     AssertNotNull(ctx);
     AssertNotNull(ssh);
     ret = wolfSSH_shutdown(ssh);
-    if (ret == WS_SOCKET_ERROR_E) {
+    if (ret == WS_SOCKET_ERROR_E || ret == WS_EOF) {
         /* fine on shutdown */
         ret = WS_SUCCESS;
     }

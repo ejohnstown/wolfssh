@@ -591,9 +591,9 @@ static int wolfSSH_SFTP_buffer_send(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer)
         /* Only a rekey/window/channel-data status means "keep driving". Any
          * other negative status (fatal error, or WS_WANT_READ/WS_WANT_WRITE on
          * a non-blocking socket) is returned so a stalled or dead rekey cannot
-         * spin forever. */
+         * spin forever. A peer EOF ends their direction only, not ours. */
         if (ret < 0 && ret != WS_REKEYING && ret != WS_WINDOW_FULL
-                && ret != WS_CHAN_RXD) {
+                && ret != WS_CHAN_RXD && ret != WS_EOF) {
             return ret;
         }
         err = wolfSSH_get_error(ssh);
@@ -757,7 +757,9 @@ static int wolfSSH_SFTP_buffer_read(WOLFSSH* ssh, WS_SFTP_BUFFER* buffer,
             }
         }
 
-        if (!wolfSSH_stream_peek(ssh, peekBuf, 1)) {
+        /* Nothing buffered, including the WS_ERROR a drained channel at EOF
+         * reports. Poll for the real status. */
+        if (wolfSSH_stream_peek(ssh, peekBuf, 1) <= 0) {
             /* poll more data off the wire */
             ret = wolfSSH_worker(ssh, NULL);
             polled = 1;

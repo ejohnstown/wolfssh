@@ -1289,6 +1289,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     else if (rc == WS_CHANNEL_CLOSED) {
                         continue;
                     }
+                    else if (rc == WS_EOF) {
+                        continue;
+                    }
                     else if (rc != WS_WANT_READ) {
                         break;
                     }
@@ -1482,8 +1485,10 @@ static int SHELL_FlushOut(WOLFSSH* ssh, WS_SOCKET_T sshFd, word32 channelId,
             if (wolfSSH_worker(ssh, NULL) < 0) {
                 int err = wolfSSH_get_error(ssh);
 
+                /* A peer EOF during the final flush is expected. */
                 if (err != WS_WANT_READ && err != WS_WANT_WRITE &&
-                        err != WS_CHAN_RXD && err != WS_REKEYING) {
+                        err != WS_CHAN_RXD && err != WS_REKEYING &&
+                        err != WS_EOF) {
                     wolfSSH_Log(WS_LOG_ERROR,
                         "[SSHD] Issue draining connection on final flush");
                     return -1;
@@ -1908,6 +1913,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
                 else if (rc == WS_CHANNEL_CLOSED) {
                     peerConnected = 0;
+                    continue;
+                }
+                else if (rc == WS_EOF) {
                     continue;
                 }
                 else if (rc == WS_WANT_WRITE) {
@@ -2608,7 +2616,7 @@ static void* HandleConnection(void* arg)
                 error = wolfSSH_get_error(ssh);
 
                 /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED) {
+                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
                     ret = 0;
                     break;
                 }

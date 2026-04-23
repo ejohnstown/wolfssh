@@ -1196,7 +1196,7 @@ static THREAD_RETURN WOLFSSH_THREAD wolfSSH_Client(void* args)
         else {
             ret = wolfSSH_worker(ssh, NULL);
         }
-        if (ret == WS_CHANNEL_CLOSED) {
+        if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
             /* Shutting down, channel closing isn't a fail. */
             ret = WS_SUCCESS;
         }
