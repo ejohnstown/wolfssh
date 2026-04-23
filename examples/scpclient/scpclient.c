@@ -314,14 +314,17 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     ret = wolfSSH_shutdown(ssh);
     /* do not continue on with shutdown process if peer already disconnected */
     if (ret != WS_CHANNEL_CLOSED && ret != WS_SOCKET_ERROR_E &&
+            ret != WS_EOF &&
             wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E &&
-            wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
+            wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED &&
+            wolfSSH_get_error(ssh) != WS_EOF) {
         if (ret != WS_SUCCESS) {
             WLOG(WS_LOG_DEBUG, "Sending the shutdown messages failed.");
         }
         else {
             ret = wolfSSH_worker(ssh, NULL);
-            if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED) {
+            if (ret != WS_SUCCESS && ret != WS_CHANNEL_CLOSED
+                    && ret != WS_EOF) {
                 WLOG(WS_LOG_DEBUG,
                     "Failed to listen for close messages from the peer.");
             }
@@ -331,7 +334,7 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     wolfSSH_free(ssh);
     wolfSSH_CTX_free(ctx);
     if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
-            ret != WS_CHANNEL_CLOSED) {
+            ret != WS_CHANNEL_CLOSED && ret != WS_EOF) {
         WLOG(WS_LOG_DEBUG,
         "Closing scp stream failed. Connection could have been closed by peer");
     }
@@ -341,7 +344,8 @@ THREAD_RETURN WOLFSSH_THREAD scp_client(void* args)
     wc_ecc_fp_free();  /* free per thread cache */
 #endif
 
-    if ((ret != WS_SUCCESS) && (ret != WS_CHANNEL_CLOSED))
+    if ((ret != WS_SUCCESS) && (ret != WS_CHANNEL_CLOSED)
+            && (ret != WS_EOF))
         ((func_args*)args)->return_code = 1;
     return 0;
 }

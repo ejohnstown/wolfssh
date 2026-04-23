@@ -896,15 +896,13 @@ int DoScpRequest(WOLFSSH* ssh)
         /* Peer MUST send back a SSH_MSG_CHANNEL_CLOSE unless already
             sent*/
         ret = ScpStreamRead(ssh, buf, 1);
-        if (ret == WS_SOCKET_ERROR_E || ret == WS_CHANNEL_CLOSED) {
+        if (ret == WS_SOCKET_ERROR_E || ret == WS_CHANNEL_CLOSED
+                || ret == WS_EOF) {
             WLOG(WS_LOG_DEBUG, scpState, "Peer hung up, but SCP is done");
             ret = WS_SUCCESS;
         }
-        else if (ret != WS_EOF) {
-            WLOG(WS_LOG_DEBUG, scpState, "Did not receive EOF packet");
-        }
         else {
-            ret = WS_SUCCESS;
+            WLOG(WS_LOG_DEBUG, scpState, "Did not receive EOF packet");
         }
     }
 

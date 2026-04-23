@@ -1263,6 +1263,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                     else if (rc == WS_CHANNEL_CLOSED) {
                         continue;
                     }
+                    else if (rc == WS_EOF) {
+                        continue;
+                    }
                     else if (rc != WS_WANT_READ) {
                         break;
                     }
@@ -1746,6 +1749,9 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 }
                 else if (rc == WS_CHANNEL_CLOSED) {
                     peerConnected = 0;
+                    continue;
+                }
+                else if (rc == WS_EOF) {
                     continue;
                 }
                 else if (rc == WS_WANT_WRITE) {
@@ -2382,7 +2388,7 @@ static void* HandleConnection(void* arg)
                 error = wolfSSH_get_error(ssh);
 
                 /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED) {
+                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
                     ret = 0;
                     break;
                 }

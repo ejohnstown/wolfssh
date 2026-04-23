@@ -2417,10 +2417,11 @@ static void test_wolfSSH_OsshCert_rsasigid(void)
 
 /* A peer gone at shutdown is not a failure: the send path returns the reset,
  * the recv path returns generic WS_ERROR with the code in wolfSSH_get_error.
- * WS_SOCKET_ERROR_E is generic, so a real shutdown failure is tolerated too. */
+ * WS_SOCKET_ERROR_E is generic, so a real shutdown failure is tolerated too.
+ * A peer that sent EOF first shows up as WS_EOF, also benign here. */
 static int AbsorbBenignReset(WOLFSSH* ssh, int ret)
 {
-    if (ret == WS_SOCKET_ERROR_E ||
+    if (ret == WS_SOCKET_ERROR_E || ret == WS_EOF ||
             (ret == WS_ERROR &&
              wolfSSH_get_error(ssh) == WS_SOCKET_ERROR_E)) {
         ret = WS_SUCCESS;

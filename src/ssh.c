@@ -1146,7 +1146,7 @@ int wolfSSH_shutdown(WOLFSSH* ssh)
      * response to SendChannelClose */
     if (channel != NULL && ret == WS_SUCCESS) {
         ret = wolfSSH_worker(ssh, NULL);
-        if (ret == WS_CHAN_RXD) {
+        if (ret == WS_CHAN_RXD || ret == WS_EOF) {
             /* received response */
             ret = WS_SUCCESS;
         }
@@ -2943,7 +2943,8 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
 
     /* If receive only wanted read or delivered channel data, still try to
      * flush any pending outbound packets. */
-    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD) {
+    if (ret == WS_SUCCESS || ret == WS_WANT_READ || ret == WS_CHAN_RXD
+            || ret == WS_EOF) {
         int sendRet = WS_SUCCESS;
 
         if (ssh->outputBuffer.length != 0)
@@ -2953,7 +2954,8 @@ int wolfSSH_worker(WOLFSSH* ssh, word32* channelId)
          * up potential window-adjusts and then return the send status. */
         if (sendRet == WS_WANT_WRITE || sendRet == WS_WINDOW_FULL) {
             int recv2 = DoReceive(ssh);
-            if (recv2 == WS_SUCCESS || recv2 == WS_WANT_READ || recv2 == WS_CHAN_RXD)
+            if (recv2 == WS_SUCCESS || recv2 == WS_WANT_READ || recv2 == WS_CHAN_RXD
+                    || recv2 == WS_EOF)
                 ret = sendRet;
             else
                 ret = recv2;

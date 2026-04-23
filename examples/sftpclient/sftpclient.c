@@ -1817,7 +1817,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
 
         /* peer hung up or channel already closed, stop trying */
         if (ret == WS_SOCKET_ERROR_E || ret == WS_ERROR ||
-                ret == WS_CHANNEL_CLOSED) {
+                ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
             ret = 0;
         }
 
@@ -1832,7 +1832,7 @@ THREAD_RETURN WOLFSSH_THREAD sftpclient_test(void* args)
                 err  = wolfSSH_get_error(ssh);
 
                 /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED) {
+                if (ret == WS_CHANNEL_CLOSED || ret == WS_EOF) {
                     ret = 0;
                     break;
                 }
