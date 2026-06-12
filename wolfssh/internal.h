@@ -714,6 +714,12 @@ WOLFSSH_LOCAL int wolfSSH_GetPath(const char* defaultPath, byte* in,
 #define WOLFSSH_MAX_SFTPOFST 3
 #define WOLFSSH_HANDLE_ID_SZ (sizeof(word32) * 2)
 
+/* Maximum number of open file handles tracked per session. Bounds memory use
+ * and keeps the linear handle lookup from becoming a CPU DoS vector. */
+#ifndef WOLFSSH_MAX_SFTP_HANDLES
+    #define WOLFSSH_MAX_SFTP_HANDLES 64
+#endif
+
 #ifndef NO_WOLFSSH_DIR
     typedef struct WS_DIR_LIST WS_DIR_LIST;
 #endif

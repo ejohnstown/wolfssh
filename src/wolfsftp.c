@@ -3909,9 +3909,18 @@ static int SFTP_AddFileHandle(WOLFSSH* ssh,
     WS_FILE_LIST* cur = NULL;
     char* fileNameCopy = NULL;
     word32 fileNameSz;
+    word32 count = 0;
 
     if (ssh == NULL || fileName == NULL) {
         return WS_BAD_ARGUMENT;
+    }
+
+    /* enforce a per-session cap on the number of open file handles */
+    for (cur = ssh->fileList; cur != NULL; cur = cur->next) {
+        if (++count >= WOLFSSH_MAX_SFTP_HANDLES) {
+            WLOG(WS_LOG_SFTP, "Too many open file handles for session");
+            return WS_MEMORY_E;
+        }
     }
 
     cur = (WS_FILE_LIST*)WMALLOC(sizeof(WS_FILE_LIST), ssh->ctx->heap,
