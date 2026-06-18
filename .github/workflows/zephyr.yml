@@ -7,6 +7,13 @@ on:
     branches: [ '*' ]
   workflow_dispatch:
 
+# Version strings hoisted here so a bump is a single edit. The Zephyr CI
+# container tag below is chosen to match ZEPHYR_SDK: ghcr.io ci:v0.26.4 bundles
+# Zephyr SDK 0.16.1, preserving parity with the previous SDK download.
+env:
+  ZEPHYR_REF: v3.4.0
+  ZEPHYR_SDK: 0.16.1
+
 jobs:
   run_test:
     name: Build and run
@@ -31,7 +38,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Init west workspace
-        run: west init --mr ${{ matrix.config.zephyr-ref }} zephyr
+        run: west init --mr ${{ env.ZEPHYR_REF }} zephyr
 
       - name: Update west.yml
         working-directory: zephyr/zephyr
