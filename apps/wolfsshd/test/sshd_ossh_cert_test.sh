@@ -49,7 +49,10 @@ command -v ssh-keygen >/dev/null 2>&1 || \
     skip "ssh-keygen not found, skipping OpenSSH cert test"
 
 WORK=$(mktemp -d)
-trap 'pkill -f "wolfsshd .*sshd_config_ossh" 2>/dev/null; rm -rf "$WORK"' EXIT
+# Only this test's own daemons: the leading slash keeps the pattern off command
+# lines that merely hold a path through apps/wolfsshd, the caller's shell above
+# all. The config name keeps it off the suite's shared daemon.
+trap 'pkill -f "/wolfsshd .*sshd_config_ossh" 2>/dev/null; rm -rf "$WORK"' EXIT
 
 # Under sudo the daemon session runs as the login user: let it traverse $WORK
 # and own the marker dir (not world-writable, so no other user can fake a PASS).
@@ -121,7 +124,7 @@ connect_ssh() { # user-key  cert  remote-command
 
 # (re)start the daemon, drive the selected client, return its exit code.
 attempt() { # user-key  cert  [remote-command]
-    pkill -f "wolfsshd .*sshd_config_ossh" 2>/dev/null
+    pkill -f "/wolfsshd .*sshd_config_ossh" 2>/dev/null
     sleep 1
     "$WOLFSSHD" -D -f "$CONFIG" -E "$WORK/sshd.log" &
     local wp=$!
@@ -175,7 +178,7 @@ echo "scp payload" > "$SCPSRC"
 
 # (re)start the daemon, leaving its PID in DPID.
 start_daemon() {
-    pkill -f "wolfsshd .*sshd_config_ossh" 2>/dev/null
+    pkill -f "/wolfsshd .*sshd_config_ossh" 2>/dev/null
     sleep 1
     "$WOLFSSHD" -D -f "$CONFIG" -E "$WORK/sshd.log" &
     DPID=$!
