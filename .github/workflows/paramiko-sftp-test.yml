@@ -5,6 +5,9 @@ on:
     branches: [ 'master', 'main', 'release/**' ]
   pull_request:
     branches: [ '*' ]
+  schedule:
+    # Daily reseed of the master-scoped wolfssl cache (staggered minute).
+    - cron: '53 2 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -17,13 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - name: Checking cache for wolfssl
-        uses: actions/cache@v5
+      - name: Restore cache of wolfssl
+        uses: actions/cache/restore@v5
         id: cache-wolfssl
         with:
           path: build-dir/
           key: wolfssh-paramiko-sftp-wolfssl-ubuntu-latest
-          lookup-only: true
 
       - name: Checkout, build, and install wolfssl
         if: steps.cache-wolfssl.outputs.cache-hit != 'true'
@@ -36,18 +38,44 @@ jobs:
           check: false
           install: true
 
+      # Caches are branch-scoped: only the master entry is shared with all PRs.
+      # Save solely on master (and the scheduled master run) to seed that entry.
+      - name: Save cache of wolfssl
+        if: github.ref == 'refs/heads/master' && steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: build-dir/
+          key: wolfssh-paramiko-sftp-wolfssl-ubuntu-latest
+
+      # On a non-master cache miss nothing is saved, so hand the fresh build to
+      # the downstream job via an artifact instead.
+      - name: Upload wolfssl build artifact (cache-miss fallback)
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfssl-build-paramiko-sftp-ubuntu-latest
+          path: build-dir/
+          retention-days: 1
+
   paramiko_sftp_test:
     needs: build_wolfssl
     name: Paramiko SFTP Test
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checking cache for wolfssl
-        uses: actions/cache@v5
+      - name: Restore cache of wolfssl
+        uses: actions/cache/restore@v5
+        id: cache-wolfssl
         with:
           path: build-dir/
           key: wolfssh-paramiko-sftp-wolfssl-ubuntu-latest
-          fail-on-cache-miss: true
+
+      - name: Download wolfssl build artifact (cache-miss fallback)
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: wolfssl-build-paramiko-sftp-ubuntu-latest
+          path: build-dir/
 
       - uses: actions/checkout@v6
         with:
