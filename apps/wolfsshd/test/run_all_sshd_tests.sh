@@ -112,6 +112,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 TOTAL=0
+PASSED=0
 SKIPPED=0
 # Set as the last statement of each branch that runs tests, and checked before
 # the summary. A shell expansion error (a bad arithmetic expansion, say) unwinds
@@ -151,6 +152,7 @@ should_skip() {
     fi
     if [ "$1" == "$EXCLUDE" ]; then
         echo "Test '$1' is excluded. Skipping."
+        TOTAL=$((TOTAL+1))
         SKIPPED=$((SKIPPED+1))
         return 0
     fi
@@ -251,6 +253,7 @@ run_test() {
         SKIPPED=$((SKIPPED+1))
     elif [ "$RESULT" == 0 ]; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED!\n"
         cat stdout.txt
@@ -302,6 +305,7 @@ EOF
     TOTAL=$((TOTAL+1))
     if grep -q "group or world readable" strictmodes_log.txt; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED!\n"
         cat strictmodes_log.txt
@@ -361,6 +365,7 @@ run_strictmodes_authkeys_negative_test() {
     after=${after:-0}
     if [ "$result" != 0 ] && [ "$after" -gt "$before" ]; then
         printf "PASSED\n"
+        PASSED=$((PASSED+1))
     else
         printf "FAILED! (expected StrictModes rejection: client exit=%s, new log matches=%s)\n" \
             "$result" "$((after - before))"
@@ -516,6 +521,7 @@ EOF
 
     rm -rf "$HK_WORK"
     printf "PASSED\n"
+    PASSED=$((PASSED+1))
 }
 
 # Run the tests. There is one path whether or not --match was given: every test
@@ -549,6 +555,7 @@ run_hostkey_perm_check
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     run_test "sshd_pubkey_reject_test.sh"
 elif matches "sshd_pubkey_reject_test.sh"; then
+    TOTAL=$((TOTAL+1))
     SKIPPED=$((SKIPPED+1))
 fi
 
@@ -556,6 +563,7 @@ fi
 if [ "$USING_LOCAL_HOST" == 1 ]; then
     run_strictmodes_authkeys_negative_test
 elif matches "strictmodes_authkeys_negative"; then
+    TOTAL=$((TOTAL+1))
     SKIPPED=$((SKIPPED+1))
 fi
 
@@ -582,6 +590,7 @@ else
     # the eleven calls above; with --match at most one of them was going to run,
     # and should_skip() has already counted it if it was excluded
     if [ -z "$MATCH" ]; then
+        TOTAL=$((TOTAL+11))
         SKIPPED=$((SKIPPED+11))
     fi
 fi
@@ -653,6 +662,18 @@ if [ "$RUN_COMPLETE" != 1 ]; then
     exit 1
 fi
 
-printf "All tests ran, $TOTAL passed, $SKIPPED skipped\n"
+# TOTAL counts every test that was reached, skips included, so it is a "ran"
+# count and not a pass count. Print the three separately, and assert they add
+# up: a skip site that bumps one counter and not the other -- or a bulk skip
+# whose literal falls behind the number of calls it stands in for -- then fails
+# the run instead of quietly printing a wrong number.
+printf "All tests ran, %d run, %d passed, %d skipped\n" \
+    "$TOTAL" "$PASSED" "$SKIPPED"
+
+if [ "$((PASSED + SKIPPED))" -ne "$TOTAL" ]; then
+    printf "ERROR: counter mismatch (ran %d, passed %d, skipped %d)\n" \
+        "$TOTAL" "$PASSED" "$SKIPPED"
+    exit 1
+fi
 
 exit 0
