@@ -41,6 +41,8 @@
 /*#include <wolfssh/error.h>*/
 #endif
 
+#include <wolfssh/ssh.h>
+
 #ifdef WOLFSSH_SCP
     /* for WS_CallbackScpSend used in func_args; test.h is included by sources
      * (e.g. testsuite.c) that do not otherwise pull in wolfscp.h */
@@ -241,8 +243,11 @@
 #endif
 
 
+/* WSHUTDOWN half closes: stop sending, keep receiving until peer EOF. Left
+ * undefined where the stack has no half close. */
 #ifdef USE_WINDOWS_API
     #define WCLOSESOCKET(s) closesocket(s)
+    #define WSHUTDOWN(s) (void)shutdown((s), SD_SEND)
     #define WSTARTTCP() do { WSADATA wsd; (void)WSAStartup(0x0002, &wsd); } while(0)
 #elif defined(MICROCHIP_TCPIP) || defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef MICROCHIP_MPLAB_HARMONY
@@ -256,6 +261,7 @@
     #define WSTARTTCP()
 #else
     #define WCLOSESOCKET(s) close(s)
+    #define WSHUTDOWN(s) (void)shutdown((s), SHUT_WR)
     #define WSTARTTCP()
 #endif
 
@@ -823,6 +829,65 @@ static INLINE int tcp_select_write(SOCKET_T socketfd, int to_sec)
     }
 
     return WS_SELECT_FAIL;
+}
+
+
+/* Send MSG_DISCONNECT, half close the socket, then read until the peer hangs
+ * up. The library reads nothing once the session is over, so the drain reads
+ * the socket directly and discards what it gets. Caller still owns and closes
+ * the socket. Returns WS_SUCCESS once the peer has hung up, WS_WANT_READ if
+ * the disconnect went out but the peer never hung up, WS_WANT_WRITE if the
+ * disconnect is still queued, or the error that failed the send. */
+static INLINE int SendDisconnectAndDrain(WOLFSSH* ssh, SOCKET_T fd)
+{
+    int ret;
+    int sel;
+    int timeouts = 0;
+#ifdef WSHUTDOWN
+    char buf[1024];
+    int reads = 0;
+#endif
+
+    /* A retry flushes the disconnect a short send left queued. */
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    while (ret == WS_WANT_WRITE) {
+        sel = tcp_select_write(fd, 1);
+        if (sel == WS_SELECT_FAIL ||
+                (sel == WS_SELECT_TIMEOUT && ++timeouts >= 10))
+            return WS_WANT_WRITE;
+        ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    }
+
+    /* The peer's disconnect ended the session first, so there is nothing
+     * to send, but its hang up is still worth waiting for. */
+    if (ret == WS_FATAL_ERROR && wolfSSH_get_error(ssh) == WS_DISCONNECT)
+        ret = WS_SUCCESS;
+    if (ret != WS_SUCCESS)
+        return ret;
+
+#ifdef WSHUTDOWN
+    WSHUTDOWN(fd);
+    timeouts = 0;
+    while (reads < 100) {
+        sel = tcp_select(fd, 1);
+        if (sel == WS_SELECT_TIMEOUT) {
+            if (++timeouts >= 10)
+                break;
+            continue;
+        }
+        /* an exception alone is urgent data, which recv() would block on */
+        if (sel != WS_SELECT_RECV_READY)
+            break;
+
+        /* EOF or a reset, either way the peer is gone */
+        reads++;
+        if (recv(fd, buf, (int)sizeof(buf), 0) <= 0)
+            return WS_SUCCESS;
+    }
+    return WS_WANT_READ;
+#else
+    return WS_SUCCESS;
+#endif
 }
 
 #endif /* WOLFSSH_TEST_SERVER || WOLFSSH_TEST_CLIENT */
