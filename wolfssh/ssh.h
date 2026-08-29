@@ -184,6 +184,12 @@ WOLFSSH_API const char* wolfSSH_GetAlgoListKeyAccepted(WOLFSSH* ssh);
 
 WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
 
+/* Strict KEX (Terrapin mitigation, CVE-2023-48795) controls. Defaults to
+ * enabled. Only the initial KEXINIT carries the marker; toggling after the
+ * first KEX is in flight has no effect on the current handshake. */
+WOLFSSH_API int wolfSSH_SetStrictKex(WOLFSSH* ssh, byte enable);
+WOLFSSH_API int wolfSSH_GetStrictKex(WOLFSSH* ssh);
+
 WOLFSSH_API const char* wolfSSH_QueryKex(word32* idx);
 WOLFSSH_API const char* wolfSSH_QueryKey(word32* idx);
 WOLFSSH_API const char* wolfSSH_QueryCipher(word32* idx);

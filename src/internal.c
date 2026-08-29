@@ -953,6 +953,23 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
  * Returns 1 if allowed 0 if not allowed. */
 INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
 {
+    /* Strict KEX (Terrapin mitigation). IGNORE, DEBUG, and UNIMPLEMENTED
+     * are otherwise allowed at any time, but during the initial KEX an
+     * injected one shifts the peer's sequence number, which is the whole
+     * attack. Refuse them until the peer's NEWKEYS lands. DISCONNECT stays
+     * allowed so a peer can still tear the connection down. */
+    if (state == WS_MSG_RECV && ssh->strictKexEnabled &&
+            !ssh->initialKexDone) {
+        if (msg == MSGID_IGNORE || msg == MSGID_DEBUG ||
+                msg == MSGID_UNIMPLEMENTED) {
+            WLOG(WS_LOG_DEBUG,
+                    "Message ID %u not allowed during the initial strict KEX",
+                    msg);
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
+            return 0;
+        }
+    }
+
 #ifndef NO_WOLFSSH_SERVER
     if (ssh->ctx->side == WOLFSSH_ENDPOINT_SERVER) {
         return IsMessageAllowedServer(ssh, msg);
@@ -1672,6 +1689,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
     ssh->isKeying    = 0; /* initial state of not keying yet */
+    ssh->sendStrictKex = 1; /* default-enabled, can be disabled at runtime */
     ssh->authId      = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[0] = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[1] = ID_USERAUTH_PASSWORD;
@@ -3476,8 +3494,16 @@ static const NameIdPair NameIdMap[] = {
     { ID_CURVE25519_SHA256, TYPE_KEX, "curve25519-sha256" },
     { ID_CURVE25519_SHA256_LIBSSH, TYPE_KEX, "curve25519-sha256@libssh.org" },
 #endif
-    { ID_EXTINFO_S, TYPE_OTHER, "ext-info-s" },
-    { ID_EXTINFO_C, TYPE_OTHER, "ext-info-c" },
+    { ID_EXT_INFO_S, TYPE_OTHER, "ext-info-s" },
+    { ID_EXT_INFO_C, TYPE_OTHER, "ext-info-c" },
+    /* Strict KEX marker. draft-miller-sshm-strict-kex defines the
+     * unprefixed names for eventual IETF standardization; deployed
+     * OpenSSH only sends the -v00@openssh.com ones. Advertise and accept
+     * both spellings. */
+    { ID_EXT_STRICT_KEX_S, TYPE_OTHER, "kex-strict-s" },
+    { ID_EXT_STRICT_KEX_C, TYPE_OTHER, "kex-strict-c" },
+    { ID_EXT_PRE_STRICT_KEX_S, TYPE_OTHER, "kex-strict-s-v00@openssh.com" },
+    { ID_EXT_PRE_STRICT_KEX_C, TYPE_OTHER, "kex-strict-c-v00@openssh.com" },
 
     /* Public Key IDs */
 #ifndef WOLFSSH_NO_RSA
@@ -6291,9 +6317,42 @@ static int DoKexInit(WOLFSSH* ssh, byte* buf, word32 len, word32* idx)
 
             /* Match the peer accepts extInfo. */
             algoId = (side == WOLFSSH_ENDPOINT_SERVER)
-                ? ID_EXTINFO_C : ID_EXTINFO_S;
+                ? ID_EXT_INFO_C : ID_EXT_INFO_S;
             extInfo = MatchIdLists(side, list, listSz, &algoId, 1);
             ssh->sendExtInfo = extInfo == algoId;
+        }
+    }
+
+    /* Strict KEX marker (Terrapin mitigation). Only valid in the initial
+     * KEXINIT (sessionIdSz == 0); if the peer offers it during a rekey,
+     * ignore the marker per draft-miller-sshm-strict-kex. */
+    if (ret == WS_SUCCESS) {
+        if (ssh->sessionIdSz == 0) {
+            /* OpenSSH only ever sends the -v00@openssh.com name, so both
+             * spellings have to be accepted for the marker to negotiate
+             * against a real peer. */
+            byte expectedStrict[2];
+            byte matched;
+
+            if (side == WOLFSSH_ENDPOINT_SERVER) {
+                expectedStrict[0] = ID_EXT_STRICT_KEX_C;
+                expectedStrict[1] = ID_EXT_PRE_STRICT_KEX_C;
+            }
+            else {
+                expectedStrict[0] = ID_EXT_STRICT_KEX_S;
+                expectedStrict[1] = ID_EXT_PRE_STRICT_KEX_S;
+            }
+            matched = MatchIdLists(side, list, listSz, expectedStrict, 2);
+            ssh->peerStrictKex = (matched != ID_UNKNOWN);
+            ssh->strictKexEnabled =
+                    ssh->peerStrictKex && ssh->sendStrictKex;
+            if (ssh->strictKexEnabled) {
+                WLOG(WS_LOG_DEBUG, "DKI: strict KEX negotiated");
+            }
+        }
+        else {
+            WLOG(WS_LOG_DEBUG,
+                    "DKI: rekey, ignoring any peer strict KEX marker");
         }
     }
 
@@ -13469,7 +13528,23 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             idx = len;
         }
         ssh->inputBuffer.idx = idx;
-        ssh->peerSeq++;
+        if (msg == MSGID_NEWKEYS) {
+            /* Strict KEX (Terrapin mitigation): once negotiated, every
+             * SSH_MSG_NEWKEYS resets the incoming sequence number so the
+             * next inbound packet starts at zero under the new keys. */
+            if (ssh->strictKexEnabled) {
+                ssh->peerSeq = 0;
+            }
+            else {
+                ssh->peerSeq++;
+            }
+            /* The peer's initial KEX is over, so IGNORE, DEBUG, and
+             * UNIMPLEMENTED are legal from it again. */
+            ssh->initialKexDone = 1;
+        }
+        else {
+            ssh->peerSeq++;
+        }
         ssh->rxMsgCount++;
         *bufferConsumed = 1;
 
@@ -14515,12 +14590,34 @@ int SendKexInit(WOLFSSH* ssh)
     }
 
     if (ret == WS_SUCCESS) {
+        /* The strict-kex marker is only advertised during the initial KEX
+         * (RFC draft-miller-sshm-strict-kex), distinguished here by an
+         * empty session id. The sendStrictKex flag lets callers opt out
+         * at runtime. */
+        int includeStrictKex = (ssh->sessionIdSz == 0) && ssh->sendStrictKex;
+
         if (ssh->ctx->side == WOLFSSH_ENDPOINT_CLIENT) {
-            kexAlgoNamesPlus = ",ext-info-c";
+            if (includeStrictKex) {
+                kexAlgoNamesPlus =
+                    ",ext-info-c"
+                    ",kex-strict-c-v00@openssh.com"
+                    ",kex-strict-c";
+            }
+            else {
+                kexAlgoNamesPlus = ",ext-info-c";
+            }
             kexAlgoNamesPlusSz = (word32)WSTRLEN(kexAlgoNamesPlus);
         }
         else {
-            kexAlgoNamesPlus = ",ext-info-s";
+            if (includeStrictKex) {
+                kexAlgoNamesPlus =
+                    ",ext-info-s"
+                    ",kex-strict-s-v00@openssh.com"
+                    ",kex-strict-s";
+            }
+            else {
+                kexAlgoNamesPlus = ",ext-info-s";
+            }
             kexAlgoNamesPlusSz = (word32)WSTRLEN(kexAlgoNamesPlus);
         }
 
@@ -17374,6 +17471,16 @@ int SendNewKeys(WOLFSSH* ssh)
         ssh->outputBuffer.length = idx;
 
         ret = BundlePacket(ssh);
+
+        /* Strict KEX (Terrapin mitigation): once negotiated, every
+         * SSH_MSG_NEWKEYS resets the outgoing sequence number so the next
+         * outbound packet starts at zero under the new keys. This has to
+         * happen here, before SendPendingChannelWindowAdjust() below can
+         * bundle a packet, or that packet goes out at the old sequence
+         * number while the peer MACs it at zero. */
+        if (ret == WS_SUCCESS && ssh->strictKexEnabled) {
+            ssh->seq = 0;
+        }
     }
 
     if (ret == WS_SUCCESS) {

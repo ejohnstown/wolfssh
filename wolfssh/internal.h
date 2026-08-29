@@ -474,8 +474,12 @@ enum {
     ID_CURVE25519_SHA256,
     ID_CURVE25519_SHA256_LIBSSH,
 #endif
-    ID_EXTINFO_S, /* Pseudo-KEX to indicate server extensions. */
-    ID_EXTINFO_C, /* Pseudo-KEX to indicate client extensions. */
+    ID_EXT_INFO_S, /* Pseudo-KEX to indicate server extensions. */
+    ID_EXT_INFO_C, /* Pseudo-KEX to indicate client extensions. */
+    ID_EXT_STRICT_KEX_S, /* Pseudo-KEX to indicate server strict KEX. */
+    ID_EXT_STRICT_KEX_C, /* Pseudo-KEX to indicate client strict KEX. */
+    ID_EXT_PRE_STRICT_KEX_S, /* Pseudo-KEX to indicate server strict KEX. */
+    ID_EXT_PRE_STRICT_KEX_C, /* Pseudo-KEX to indicate client strict KEX. */
 
     /* Public Key IDs */
     ID_SSH_RSA,
@@ -1263,6 +1267,10 @@ struct WOLFSSH {
     byte userAuthPkDone;
     byte sendExtInfo;
     byte extInfoSent; /* track if the ext info has already been sent */
+    byte sendStrictKex; /* offer the strict KEX marker on initial KEXINIT */
+    byte peerStrictKex; /* peer offered the strict KEX marker (initial KEX) */
+    byte strictKexEnabled; /* both sides negotiated strict KEX for this session */
+    byte initialKexDone; /* peer's initial KEX finished (its NEWKEYS arrived) */
     byte* peerSigId;
     word32 peerSigIdSz;
 
