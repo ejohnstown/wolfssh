@@ -185,6 +185,69 @@ static int NonBlockSSH_connect(WOLFSSH* ssh)
     return ret;
 }
 
+
+/* Send MSG_DISCONNECT, half close the socket, then process peer messages
+ * until the peer disconnects and hangs up. Caller still owns and closes
+ * the socket. Returns WS_SUCCESS when the peer's EOF was seen. */
+static int SendDisconnectAndDrain(WOLFSSH* ssh, SOCKET_T fd)
+{
+    int ret;
+    int error;
+    int pending = 0;    /* DISCONNECT still queued in the output buffer */
+    int halfClosed = 0;
+    int sawEof = 0;
+    int timeouts = 0;
+    int spins = 0;
+
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    if (ret == WS_WANT_WRITE)
+        pending = 1;
+    else if (ret != WS_SUCCESS)
+        return WS_FATAL_ERROR;    /* peer already gone */
+
+    while (spins++ < 100) {
+        /* only stop sending once the disconnect is on the wire */
+        if (!pending && !halfClosed) {
+            WSHUTDOWN(fd);
+            halfClosed = 1;
+        }
+
+        ret = tcp_select(fd, pending ? 0 : 1);
+        if (ret == WS_SELECT_TIMEOUT && !pending) {
+            if (++timeouts >= 10)
+                break;    /* give up */
+            continue;
+        }
+        if (ret == WS_SELECT_FAIL)
+            break;
+
+        ret = wolfSSH_worker(ssh, NULL);
+        error = wolfSSH_get_error(ssh);
+
+        /* any worker return besides want write proves the output buffer
+         * drained, except a fatal receive, which skips the flush */
+        if (ret == WS_WANT_WRITE || error == WS_WANT_WRITE)
+            pending = 1;
+        else if (error != WS_DISCONNECT)
+            pending = 0;
+
+        if (error == WS_SOCKET_ERROR_E) {
+            sawEof = 1;    /* peer hung up */
+            break;
+        }
+        if (error == WS_DISCONNECT)
+            continue;      /* peer's disconnect, now wait for its hang up */
+        if (ret == WS_SUCCESS || ret == WS_CHAN_RXD ||
+                ret == WS_CHANNEL_CLOSED || ret == WS_REKEYING ||
+                error == WS_WANT_READ || error == WS_WANT_WRITE)
+            continue;      /* handled a message, keep reading */
+
+        break;             /* hard failure */
+    }
+
+    return sawEof ? WS_SUCCESS : WS_FATAL_ERROR;
+}
+
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NUCLEUS) && \
     defined(WOLFSSH_TERM) && !defined(NO_FILESYSTEM)
 
@@ -704,6 +767,7 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
     socklen_t clientAddrSz = sizeof(clientAddr);
     char rxBuf[80];
     int ret = 0;
+    int error = 0;
     int ch;
     int userEcc = 0;
     word16 port = wolfSshPort;
@@ -1185,24 +1249,15 @@ THREAD_RETURN WOLFSSH_THREAD client_test(void* args)
 #endif
     }
     ret = wolfSSH_shutdown(ssh);
-    /* do not continue on with shutdown process if peer already disconnected */
-    if (ret != WS_SOCKET_ERROR_E && wolfSSH_get_error(ssh) != WS_SOCKET_ERROR_E
-            && wolfSSH_get_error(ssh) != WS_CHANNEL_CLOSED) {
-        if (ret != WS_SUCCESS) {
-            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
-            wolfSSH_free(ssh);
-            wolfSSH_CTX_free(ctx);
-            err_sys("Sending the shutdown messages failed.");
-        }
-        ret = wolfSSH_worker(ssh, NULL);
-        if (ret != WS_SUCCESS && ret != WS_SOCKET_ERROR_E &&
-            ret != WS_CHANNEL_CLOSED) {
-            ClientFreeBuffers(pubKeyName, privKeyName, NULL);
-            wolfSSH_free(ssh);
-            wolfSSH_CTX_free(ctx);
-            err_sys("Failed to listen for close messages from the peer.");
-        }
+    error = wolfSSH_get_error(ssh);
+
+    /* peer already hung up, just close */
+    if (error != WS_SOCKET_ERROR_E) {
+        ret = SendDisconnectAndDrain(ssh, sockFd);
+        if (ret != WS_SUCCESS)
+            printf("Gave up on graceful shutdown, closing the socket\n");
     }
+    ret = WS_SUCCESS;
     WCLOSESOCKET(sockFd);
 
 #if defined(WOLFSSH_TERM) || defined(WOLFSSH_SHELL)

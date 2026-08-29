@@ -235,8 +235,12 @@
 #endif
 
 
+/* WSHUTDOWN half closes: stop sending, keep receiving until peer EOF. No-op
+ * where the stack has no half close; the peer's drain then ends on its
+ * timeout. */
 #ifdef USE_WINDOWS_API
     #define WCLOSESOCKET(s) closesocket(s)
+    #define WSHUTDOWN(s) (void)shutdown((s), SD_SEND)
     #define WSTARTTCP() do { WSADATA wsd; (void)WSAStartup(0x0002, &wsd); } while(0)
 #elif defined(MICROCHIP_TCPIP) || defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef MICROCHIP_MPLAB_HARMONY
@@ -244,12 +248,15 @@
     #else
         #define WCLOSESOCKET(s) closesocket((s))
     #endif
+    #define WSHUTDOWN(s) do { (void)(s); } while (0)
     #define WSTARTTCP()
 #elif defined(WOLFSSL_NUCLEUS)
     #define WCLOSESOCKET(s) NU_Close_Socket((s))
+    #define WSHUTDOWN(s) do { (void)(s); } while (0)
     #define WSTARTTCP()
 #else
     #define WCLOSESOCKET(s) close(s)
+    #define WSHUTDOWN(s) (void)shutdown((s), SHUT_WR)
     #define WSTARTTCP()
 #endif
 

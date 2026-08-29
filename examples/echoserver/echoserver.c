@@ -1570,6 +1570,69 @@ static int NonBlockSSH_accept(WOLFSSH* ssh)
 }
 
 
+/* Send MSG_DISCONNECT, half close the socket, then process peer messages
+ * until the peer disconnects and hangs up. Caller still owns and closes
+ * the socket. Returns WS_SUCCESS when the peer's EOF was seen. */
+static int SendDisconnectAndDrain(WOLFSSH* ssh, WS_SOCKET_T fd)
+{
+    int ret;
+    int error;
+    int pending = 0;    /* DISCONNECT still queued in the output buffer */
+    int halfClosed = 0;
+    int sawEof = 0;
+    int timeouts = 0;
+    int spins = 0;
+
+    ret = wolfSSH_SendDisconnect(ssh, WOLFSSH_DISCONNECT_BY_APPLICATION);
+    if (ret == WS_WANT_WRITE)
+        pending = 1;
+    else if (ret != WS_SUCCESS)
+        return WS_FATAL_ERROR;    /* peer already gone */
+
+    while (spins++ < 100) {
+        /* only stop sending once the disconnect is on the wire */
+        if (!pending && !halfClosed) {
+            WSHUTDOWN(fd);
+            halfClosed = 1;
+        }
+
+        ret = tcp_select(fd, pending ? 0 : 1);
+        if (ret == WS_SELECT_TIMEOUT && !pending) {
+            if (++timeouts >= 10)
+                break;    /* give up */
+            continue;
+        }
+        if (ret == WS_SELECT_FAIL)
+            break;
+
+        ret = wolfSSH_worker(ssh, NULL);
+        error = wolfSSH_get_error(ssh);
+
+        /* any worker return besides want write proves the output buffer
+         * drained, except a fatal receive, which skips the flush */
+        if (ret == WS_WANT_WRITE || error == WS_WANT_WRITE)
+            pending = 1;
+        else if (error != WS_DISCONNECT)
+            pending = 0;
+
+        if (error == WS_SOCKET_ERROR_E) {
+            sawEof = 1;    /* peer hung up */
+            break;
+        }
+        if (error == WS_DISCONNECT)
+            continue;      /* peer's disconnect, now wait for its hang up */
+        if (ret == WS_SUCCESS || ret == WS_CHAN_RXD ||
+                ret == WS_CHANNEL_CLOSED || ret == WS_REKEYING ||
+                error == WS_WANT_READ || error == WS_WANT_WRITE)
+            continue;      /* handled a message, keep reading */
+
+        break;             /* hard failure */
+    }
+
+    return sawEof ? WS_SUCCESS : WS_FATAL_ERROR;
+}
+
+
 static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 {
     int ret = 0, error = 0;
@@ -1638,46 +1701,17 @@ static THREAD_RETURN WOLFSSH_THREAD server_worker(void* vArgs)
 
     if (error != WS_SOCKET_ERROR_E && error != WS_FATAL_ERROR) {
         ret = wolfSSH_shutdown(threadCtx->ssh);
+        error = wolfSSH_get_error(threadCtx->ssh);
 
         /* peer hung up, stop shutdown */
-        if (ret == WS_SOCKET_ERROR_E) {
+        if (error == WS_SOCKET_ERROR_E) {
             ret = 0;
         }
-
-        error = wolfSSH_get_error(threadCtx->ssh);
-        if (error != WS_SOCKET_ERROR_E &&
-                (error == WS_WANT_READ || error == WS_WANT_WRITE)) {
-            int maxAttempt = 10; /* make 10 attempts max before giving up */
-            int attempt;
-
-            for (attempt = 0; attempt < maxAttempt; attempt++) {
-                ret = wolfSSH_worker(threadCtx->ssh, NULL);
-                error = wolfSSH_get_error(threadCtx->ssh);
-
-                /* peer successfully closed down gracefully */
-                if (ret == WS_CHANNEL_CLOSED) {
-                    ret = 0;
-                    break;
-                }
-
-                /* peer hung up, stop shutdown */
-                if (ret == WS_SOCKET_ERROR_E) {
-                    ret = 0;
-                    break;
-                }
-
-                if (error == WS_WANT_READ || error == WS_WANT_WRITE) {
-                    /* Wanting read or wanting write. Clear ret. */
-                    ret = 0;
-                }
-                else {
-                    break;
-                }
-            }
-
-            if (attempt == maxAttempt) {
+        else {
+            ret = SendDisconnectAndDrain(threadCtx->ssh, threadCtx->fd);
+            if (ret != WS_SUCCESS)
                 printf("Gave up on graceful shutdown, closing the socket\n");
-            }
+            ret = 0;
         }
     }
 
