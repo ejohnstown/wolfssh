@@ -185,8 +185,14 @@ WOLFSSH_API const char* wolfSSH_GetAlgoListKeyAccepted(WOLFSSH* ssh);
 WOLFSSH_API int wolfSSH_CheckAlgoName(const char* name);
 
 /* Strict KEX (Terrapin mitigation, CVE-2023-48795) controls. Defaults to
- * enabled. Only the initial KEXINIT carries the marker; toggling after the
- * first KEX is in flight has no effect on the current handshake. */
+ * enabled. The CTX setting seeds every session made from it; the session
+ * setting overrides it for that session alone. Only the initial KEXINIT
+ * carries the marker, so toggling after the first KEX is in flight has no
+ * effect on the current handshake. The CTX calls report WS_BAD_ARGUMENT on
+ * a NULL ctx, the session calls WS_SSH_NULL_E on a NULL ssh; the getters
+ * otherwise report 1 for enabled and 0 for disabled. */
+WOLFSSH_API int wolfSSH_CTX_SetStrictKex(WOLFSSH_CTX* ctx, byte enable);
+WOLFSSH_API int wolfSSH_CTX_GetStrictKex(WOLFSSH_CTX* ctx);
 WOLFSSH_API int wolfSSH_SetStrictKex(WOLFSSH* ssh, byte enable);
 WOLFSSH_API int wolfSSH_GetStrictKex(WOLFSSH* ssh);
 

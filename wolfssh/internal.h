@@ -869,6 +869,7 @@ struct WOLFSSH_CTX {
     word32 windowSz;
     word32 maxPacketSz;
     word32 maxAuthAttempts;           /* server cap on failed userauth */
+    byte sendStrictKex;               /* offer the strict KEX marker */
     byte side;                        /* client or server */
     byte showBanner;
 #ifdef WOLFSSH_AGENT

@@ -3379,6 +3379,31 @@ int wolfSSH_CheckAlgoName(const char* name)
 }
 
 
+int wolfSSH_CTX_SetStrictKex(WOLFSSH_CTX* ctx, byte enable)
+{
+    int ret = WS_BAD_ARGUMENT;
+
+    if (ctx) {
+        ctx->sendStrictKex = enable ? 1 : 0;
+        ret = WS_SUCCESS;
+    }
+
+    return ret;
+}
+
+
+int wolfSSH_CTX_GetStrictKex(WOLFSSH_CTX* ctx)
+{
+    int ret = WS_BAD_ARGUMENT;
+
+    if (ctx) {
+        ret = ctx->sendStrictKex ? 1 : 0;
+    }
+
+    return ret;
+}
+
+
 int wolfSSH_SetStrictKex(WOLFSSH* ssh, byte enable)
 {
     int ret = WS_SSH_NULL_E;

@@ -614,6 +614,11 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
 }
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO || WOLFSSH_TEST_INTERNAL */
 
+/* A transport-layer message id with no meaning assigned to it. Anything in
+ * 8..19 will do; the receiver has no handler for it and answers with
+ * UNIMPLEMENTED, having already counted the packet. */
+#define REGRESS_UNASSIGNED_TRANS_MSGID 9
+
 #ifdef KEXDH_REPLY_REGRESS_KEX_ALGO
 
 #define REGRESS_DUPLEX_QUEUE_SZ 32768U
@@ -665,6 +670,10 @@ static word32 LoadFileBuffer(const char* path, byte* buf, word32 bufSz)
 #define REGRESS_MUTATE_E_EMPTY 5
 #define REGRESS_MUTATE_GEX_GROUP_SHRINK 6
 #define REGRESS_MUTATE_GEX_GEN_BAD 7
+#define REGRESS_MUTATE_TERRAPIN 8
+
+/* 4 (len) + 1 (padLen) + 1 (msgId) + 4 (empty string payload) + 6 (pad) */
+#define REGRESS_INJECT_PACKET_SZ 16U
 
 typedef struct {
     byte data[REGRESS_DUPLEX_QUEUE_SZ];
@@ -680,6 +689,9 @@ typedef struct {
     byte scratch[REGRESS_MUTATION_SCRATCH_SZ];
     word32 scratchSz;
     byte mode;
+    /* Terrapin bookkeeping */
+    byte injectMsgId;
+    word32 injectedPackets;
 } KexReplyMutator;
 
 typedef struct DuplexEndpoint {
@@ -689,6 +701,9 @@ typedef struct DuplexEndpoint {
     word32 disconnectReason;
     byte isServer;
     byte sawDisconnect;
+    /* What this endpoint put in its own plaintext KEXINIT */
+    byte sentStrictKexMarker;
+    byte sentExtInfoMarker;
 } DuplexEndpoint;
 
 typedef struct {
@@ -1118,8 +1133,143 @@ static int RewriteSingleKexDhGexGroupPacket(const byte* packet,
 }
 #endif /* REGRESS_GEX_KEX_ALGO */
 
-/* SIG_*, F_TRUNC and the GEX_* modes rewrite the server's messages;
- * E_TRUNC and E_EMPTY the client's init. */
+/* Substring search over a wire buffer, which is not NUL terminated. */
+static int BufferContainsString(const byte* buf, word32 bufSz, const char* str)
+{
+    word32 strSz = (word32)WSTRLEN(str);
+    word32 i;
+
+    if (strSz == 0 || bufSz < strSz) {
+        return 0;
+    }
+
+    for (i = 0; i + strSz <= bufSz; i++) {
+        if (WMEMCMP(buf + i, str, strSz) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/* Note the pseudo-KEX markers this endpoint advertises. Only the initial
+ * KEXINIT travels in the clear, which is the one the strict KEX marker is
+ * allowed on, so a rekey that wrongly re-advertises it is caught by the
+ * marker never appearing rather than by reading the encrypted packet. */
+static void NoteOutboundKexInitMarkers(DuplexEndpoint* endpoint,
+        const byte* packet, word32 packetSz)
+{
+    const char* strictName = endpoint->isServer
+        ? "kex-strict-s" : "kex-strict-c";
+    const char* extInfoName = endpoint->isServer ? "ext-info-s" : "ext-info-c";
+
+    if (BufferContainsString(packet, packetSz, strictName)) {
+        endpoint->sentStrictKexMarker = 1;
+    }
+    if (BufferContainsString(packet, packetSz, extInfoName)) {
+        endpoint->sentExtInfoMarker = 1;
+    }
+}
+
+/* Build the packet a Terrapin attacker splices into the initial KEX. The
+ * payload is four zero bytes, which reads as an empty string for IGNORE
+ * (RFC 4253 section 11.2, and DoIgnore() only skips it), as a sequence
+ * number for UNIMPLEMENTED, and as an empty extension list for EXT_INFO.
+ * An unassigned id has no handler to read it at all. Sized to a multiple
+ * of MIN_BLOCK_SZ because the packet travels in the clear. */
+static void BuildInjectedPacketPlain(byte* out, word32 outSz, byte msgId)
+{
+    const byte padLen = 6;
+    /* padLen field + msg id + empty string + padding */
+    const word32 packetLen = PAD_LENGTH_SZ + MSG_ID_SZ + UINT32_SZ + padLen;
+
+    AssertIntEQ(outSz, REGRESS_INJECT_PACKET_SZ);
+    AssertIntEQ(UINT32_SZ + packetLen, REGRESS_INJECT_PACKET_SZ);
+
+    (void)AppendUint32(out, outSz, 0, packetLen);
+    out[UINT32_SZ] = padLen;
+    out[UINT32_SZ + PAD_LENGTH_SZ] = msgId;
+    /* empty string payload, then zero padding */
+    WMEMSET(out + UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ, 0,
+            UINT32_SZ + padLen);
+}
+
+/* Walk a plaintext write looking for the packet carrying msgId, reporting
+ * the offset it starts at. Only sound before NEWKEYS, where the framing is
+ * readable; the Terrapin splice point is by definition in that window. */
+static int FindPlainPacketOffset(const byte* packet, word32 packetSz,
+        byte msgId, word32* offsetOut)
+{
+    word32 offset = 0;
+
+    while (packetSz - offset >= UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ) {
+        word32 curPacketSz = ReadUint32(packet + offset) + UINT32_SZ;
+
+        if (curPacketSz > packetSz - offset ||
+                curPacketSz < UINT32_SZ + PAD_LENGTH_SZ + MSG_ID_SZ +
+                        MIN_PAD_LENGTH) {
+            return 0;
+        }
+
+        if (packet[offset + UINT32_SZ + PAD_LENGTH_SZ] == msgId) {
+            *offsetOut = offset;
+            return 1;
+        }
+
+        offset += curPacketSz;
+    }
+
+    return 0;
+}
+
+/* The Terrapin prefix-truncation attack (CVE-2023-48795). Nothing in the
+ * initial KEX is authenticated, so a man in the middle can splice an extra
+ * SSH_MSG_IGNORE in ahead of the victim's NEWKEYS. The victim accepts it,
+ * and from then on its inbound sequence number runs one ahead of what the
+ * peer is MACing against.
+ *
+ * The published attack pairs that with deleting a packet after NEWKEYS to
+ * put the counters back in step, silently truncating the stream. That step
+ * only works when the cipher takes its nonce from the sequence number --
+ * chacha20-poly1305@openssh.com or the *-etm@openssh.com MACs. wolfSSH
+ * implements neither: its AES-GCM, CTR, and CBC modes all carry chained
+ * cipher state, so a deletion breaks decryption outright. The injection
+ * alone is what these tests exercise, and refusing it is what the
+ * mitigation has to do. */
+static void TerrapinInjectBeforeNewKeys(DuplexEndpoint* endpoint,
+        const byte** output, word32* outputSz)
+{
+    KexReplyMutator* mutator = endpoint->mutator;
+    byte injectPkt[REGRESS_INJECT_PACKET_SZ];
+    word32 newKeysOffset;
+
+    if (mutator->injectedPackets > 0) {
+        return;
+    }
+    if (!FindPlainPacketOffset(*output, *outputSz, MSGID_NEWKEYS,
+            &newKeysOffset)) {
+        return;
+    }
+
+    BuildInjectedPacketPlain(injectPkt, (word32)sizeof(injectPkt),
+            mutator->injectMsgId);
+
+    /* Everything ahead of NEWKEYS passes through untouched, then the forged
+     * packet; the caller forwards the NEWKEYS tail. */
+    if (newKeysOffset > 0) {
+        AssertIntEQ(QueueAppend(&endpoint->peer->inbound, *output,
+                newKeysOffset), WS_SUCCESS);
+    }
+    AssertIntEQ(QueueAppend(&endpoint->peer->inbound, injectPkt,
+            (word32)sizeof(injectPkt)), WS_SUCCESS);
+
+    mutator->injectedPackets++;
+    *output += newKeysOffset;
+    *outputSz -= newKeysOffset;
+}
+
+/* SIG_*, F_TRUNC, TERRAPIN and the GEX_* modes rewrite the server's
+ * messages; E_TRUNC and E_EMPTY the client's init. */
 static int MutatorTargetsEndpoint(byte mode, byte isServer)
 {
     if (mode == REGRESS_MUTATE_E_TRUNC || mode == REGRESS_MUTATE_E_EMPTY) {
@@ -1208,6 +1358,18 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
 
     if (endpoint->mutator != NULL &&
             endpoint->mutator->enabled &&
+            endpoint->mutator->mode == REGRESS_MUTATE_TERRAPIN &&
+            MutatorTargetsEndpoint(endpoint->mutator->mode,
+                    endpoint->isServer) &&
+            !(outputSz >= REGRESS_SSH_PROTO_PREFIX_SZ &&
+              WMEMCMP(output, REGRESS_SSH_PROTO_PREFIX,
+                      REGRESS_SSH_PROTO_PREFIX_SZ) == 0)) {
+        TerrapinInjectBeforeNewKeys(endpoint, &output, &outputSz);
+    }
+
+    if (endpoint->mutator != NULL &&
+            endpoint->mutator->enabled &&
+            endpoint->mutator->mode != REGRESS_MUTATE_TERRAPIN &&
             MutatorTargetsEndpoint(endpoint->mutator->mode,
                     endpoint->isServer) &&
             endpoint->mutator->mutatedPackets == 0 &&
@@ -1261,6 +1423,7 @@ static int DuplexSend(WOLFSSH* ssh, void* buf, word32 sz, void* ctx)
               WMEMCMP(output, REGRESS_SSH_PROTO_PREFIX,
                       REGRESS_SSH_PROTO_PREFIX_SZ) == 0)) {
         NoteOutboundDisconnect(endpoint, output, outputSz);
+        NoteOutboundKexInitMarkers(endpoint, output, outputSz);
     }
 
     ret = QueueAppend(&endpoint->peer->inbound, output, outputSz);
@@ -1778,6 +1941,256 @@ static void TestKexDhGexGroupBadGeneratorSendsDisconnect(void)
 }
 #endif /* REGRESS_GEX_KEX_ALGO */
 
+/* ---- Strict KEX, the Terrapin mitigation (CVE-2023-48795) ---- */
+
+/* KEXINIT, KEXDH_INIT/KEXDH_REPLY, NEWKEYS. Each side sends exactly three
+ * packets before its NEWKEYS, so strict KEX zeroing the counters there
+ * leaves both of them three short of an unmitigated run. */
+#define REGRESS_PRE_NEWKEYS_PACKETS 3
+
+/* injectMsgId is the message a man in the middle splices in ahead of the
+ * server's NEWKEYS, or MSGID_NONE for a clean run. */
+static void InitStrictKexHarness(KexReplyHarness* harness, byte injectMsgId,
+        byte clientStrict, byte serverStrict)
+{
+    InitKexReplyHarnessEx(harness, REGRESS_DEFAULT_KEY_ALGO,
+            REGRESS_DEFAULT_KEY_PATH, injectMsgId != MSGID_NONE,
+            REGRESS_MUTATE_TERRAPIN, NULL, 0);
+    harness->mutator.injectMsgId = injectMsgId;
+    AssertIntEQ(wolfSSH_SetStrictKex(harness->client, clientStrict),
+            WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetStrictKex(harness->server, serverStrict),
+            WS_SUCCESS);
+}
+
+/* Two wolfSSH peers with the default settings must come out of the initial
+ * KEX with strict KEX on at both ends. */
+static void TestStrictKexNegotiatedByDefault(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarness(&harness, MSGID_NONE, 1, 1);
+    AssertIntEQ(wolfSSH_GetStrictKex(harness.client), 1);
+    AssertIntEQ(wolfSSH_GetStrictKex(harness.server), 1);
+
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    AssertIntEQ(harness.client->peerStrictKex, 1);
+    AssertIntEQ(harness.client->strictKexEnabled, 1);
+    AssertIntEQ(harness.server->peerStrictKex, 1);
+    AssertIntEQ(harness.server->strictKexEnabled, 1);
+
+    /* Both sides saw the peer's NEWKEYS, so the initial-KEX message
+     * restriction has lifted. */
+    AssertIntEQ(harness.client->initialKexDone, 1);
+    AssertIntEQ(harness.server->initialKexDone, 1);
+
+    /* Both markers really went out on the initial KEXINIT. */
+    AssertIntEQ(harness.clientIo.sentStrictKexMarker, 1);
+    AssertIntEQ(harness.serverIo.sentStrictKexMarker, 1);
+
+    /* Control for the Terrapin tests below: an unattacked client does
+     * receive the server's EXT_INFO. */
+    AssertTrue(harness.client->peerSigIdSz > 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* The marker rides on the KEXINIT algorithm list, so a peer that opts out
+ * never advertises it and neither side turns the mitigation on. The
+ * handshake still has to complete -- an old peer must stay interoperable. */
+static void AssertStrictKexOptOut(byte clientStrict, byte serverStrict)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarness(&harness, MSGID_NONE, clientStrict, serverStrict);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+
+    /* The opted-out side left the marker off its KEXINIT, and the peer
+     * agrees it never arrived. */
+    AssertIntEQ(harness.clientIo.sentStrictKexMarker, clientStrict);
+    AssertIntEQ(harness.serverIo.sentStrictKexMarker, serverStrict);
+    AssertIntEQ(harness.client->peerStrictKex, serverStrict);
+    AssertIntEQ(harness.server->peerStrictKex, clientStrict);
+    AssertIntEQ(harness.client->strictKexEnabled, 0);
+    AssertIntEQ(harness.server->strictKexEnabled, 0);
+
+    /* Only the strict KEX marker is conditional; ext-info still goes out. */
+    AssertIntEQ(harness.clientIo.sentExtInfoMarker, 1);
+    AssertIntEQ(harness.serverIo.sentExtInfoMarker, 1);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestStrictKexClientOptOut(void)
+{
+    AssertStrictKexOptOut(0, 1);
+}
+
+static void TestStrictKexServerOptOut(void)
+{
+    AssertStrictKexOptOut(1, 0);
+}
+
+/* draft-miller-sshm-strict-kex puts the marker in the first KEXINIT only.
+ * A rekey KEXINIT is encrypted, so rather than read it off the wire, force
+ * SendKexInit down its rekey path -- a session id is already established --
+ * and check the marker never appears in the clear. The handshake itself is
+ * expected to fall over on the planted session id; only what went out
+ * before that matters. */
+static void TestStrictKexMarkerNotSentOnRekey(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarness(&harness, MSGID_NONE, 1, 1);
+
+    /* A non-empty session id is what SendKexInit reads as "this is a
+     * rekey", the same test DoKexInit makes on the receiving side. */
+    WMEMSET(harness.client->sessionId, 0x5A, WC_SHA256_DIGEST_SIZE);
+    harness.client->sessionIdSz = WC_SHA256_DIGEST_SIZE;
+
+    RunKexReplyHandshake(&harness, &result);
+
+    /* The client did send a KEXINIT, and it carried ext-info-c but not the
+     * strict KEX marker. */
+    AssertIntEQ(harness.clientIo.sentExtInfoMarker, 1);
+    AssertIntEQ(harness.clientIo.sentStrictKexMarker, 0);
+
+    /* The server saw no marker either, so it cannot have turned the
+     * mitigation on off the back of a rekey. */
+    AssertIntEQ(harness.server->peerStrictKex, 0);
+    AssertIntEQ(harness.server->strictKexEnabled, 0);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* NEWKEYS must zero both sequence numbers once strict KEX is negotiated.
+ * Run the same handshake with and without it and compare the counters: the
+ * mitigated run has to be short by exactly the packets each side sent
+ * before its NEWKEYS. */
+static void TestStrictKexResetsSequenceNumbers(void)
+{
+    KexReplyHarness strict;
+    KexReplyHarness plain;
+    KexReplyRunResult result;
+
+    InitStrictKexHarness(&strict, MSGID_NONE, 1, 1);
+    RunKexReplyHandshake(&strict, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    AssertIntEQ(strict.client->strictKexEnabled, 1);
+
+    InitStrictKexHarness(&plain, MSGID_NONE, 0, 0);
+    RunKexReplyHandshake(&plain, &result);
+    AssertTrue(result.clientSuccess);
+    AssertTrue(result.serverSuccess);
+    AssertIntEQ(plain.client->strictKexEnabled, 0);
+
+    AssertIntEQ(strict.client->seq + REGRESS_PRE_NEWKEYS_PACKETS,
+            plain.client->seq);
+    AssertIntEQ(strict.client->peerSeq + REGRESS_PRE_NEWKEYS_PACKETS,
+            plain.client->peerSeq);
+    AssertIntEQ(strict.server->seq + REGRESS_PRE_NEWKEYS_PACKETS,
+            plain.server->seq);
+    AssertIntEQ(strict.server->peerSeq + REGRESS_PRE_NEWKEYS_PACKETS,
+            plain.server->peerSeq);
+
+    FreeKexReplyHarness(&plain);
+    FreeKexReplyHarness(&strict);
+}
+
+/* The injection, with the mitigation off. Nothing rejects the forged
+ * SSH_MSG_IGNORE: the client processes it, goes on to accept the server's
+ * NEWKEYS, and only notices anything is wrong one packet later, when the
+ * shifted sequence number makes the server's next message fail to
+ * authenticate. That undetected shift is what Terrapin is built on. */
+static void TestTerrapinInjectionAcceptedWithoutStrictKex(void)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarness(&harness, MSGID_IGNORE, 0, 0);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.injectedPackets, 1);
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.client->strictKexEnabled, 0);
+
+    /* The client accepted the injected packet and kept going all the way
+     * through the server's NEWKEYS. Nothing in the KEX objected. */
+    AssertIntEQ(harness.client->initialKexDone, 1);
+    AssertTrue(harness.client->error != WS_MSGID_NOT_ALLOWED_E);
+
+    /* The shift: the client has counted one more inbound packet than the
+     * server has sent, so the two are MACing against different numbers. */
+    AssertIntEQ(harness.client->peerSeq, harness.server->seq + 1);
+
+    FreeKexReplyHarness(&harness);
+}
+
+/* The same injection with strict KEX negotiated, for each message a man in
+ * the middle could reach for. All of them are refused for as long as the
+ * initial KEX is running, so the sequence number is never shifted and the
+ * connection dies loudly instead. */
+static void AssertTerrapinInjectionRejected(byte injectMsgId)
+{
+    KexReplyHarness harness;
+    KexReplyRunResult result;
+
+    InitStrictKexHarness(&harness, injectMsgId, 1, 1);
+    RunKexReplyHandshake(&harness, &result);
+
+    AssertIntEQ(harness.mutator.injectedPackets, 1);
+    AssertIntEQ(harness.mutator.parseError, 0);
+    AssertIntEQ(harness.client->strictKexEnabled, 1);
+
+    AssertFalse(result.clientSuccess);
+    AssertIntEQ(result.clientErr, WS_MSGID_NOT_ALLOWED_E);
+
+    /* Rejected where it was injected: ahead of the server's NEWKEYS, so
+     * the client counted only the server's KEXINIT and KEXDH_REPLY and its
+     * sequence number was never shifted. */
+    AssertIntEQ(harness.client->initialKexDone, 0);
+    AssertIntEQ(harness.client->peerSeq, 2);
+
+    /* Strict KEX calls for ending the connection, not just dropping the
+     * packet, so the client tells the server why before it goes. */
+    AssertIntEQ(harness.client->disconnected, 1);
+
+    /* The runner stops as soon as the client fails, so give the server one
+     * more turn to read what the client sent on its way out. */
+    (void)wolfSSH_accept(harness.server);
+    AssertIntEQ(harness.server->disconnected, 1);
+
+    FreeKexReplyHarness(&harness);
+}
+
+static void TestTerrapinInjectionRejectedWithStrictKex(void)
+{
+    /* IGNORE, DEBUG and UNIMPLEMENTED are the messages the attack is
+     * written up with. EXT_INFO and an unassigned transport id are here
+     * because the receiver used to take those during the initial KEX just
+     * as readily, and each one buys the attacker the same step of the
+     * sequence number. */
+    static const byte injectable[] = {
+        MSGID_IGNORE, MSGID_DEBUG, MSGID_UNIMPLEMENTED, MSGID_EXT_INFO,
+        REGRESS_UNASSIGNED_TRANS_MSGID
+    };
+    word32 i;
+
+    for (i = 0; i < (word32)(sizeof(injectable) / sizeof(injectable[0])); i++) {
+        AssertTerrapinInjectionRejected(injectable[i]);
+    }
+}
+
 #endif /* KEXDH_REPLY_REGRESS_KEX_ALGO */
 
 /* Shared with the client-side forwarding tests below. */
@@ -2057,6 +2470,102 @@ static void TestAuthMessageBlockedDuringKeying(WOLFSSH* ssh)
             WS_MSG_RECV);
     AssertTrue(allowed);
     AssertIntEQ(ssh->handshake->expectMsgId, MSGID_NONE);
+}
+
+/* Strict KEX gates the messages an attacker can inject for free during the
+ * initial KEX. They are otherwise legal at any time, which is exactly what
+ * makes them useful for shifting the peer's sequence number
+ * (CVE-2023-48795). */
+static void TestStrictKexBlocksInjectableMessages(WOLFSSH* ssh)
+{
+    /* Every message id the receiver would otherwise take during the initial
+     * KEX. IGNORE, DEBUG and UNIMPLEMENTED are the ones the attack is
+     * usually described with, but EXT_INFO and the unassigned transport ids
+     * are just as good: MSGIDLIMIT_TRANS_GEN() covers 1 through 19 and used
+     * to wave all of them through, and any one of them steps peerSeq. */
+    static const byte injectable[] = {
+        MSGID_IGNORE, MSGID_DEBUG, MSGID_UNIMPLEMENTED, MSGID_EXT_INFO,
+        REGRESS_UNASSIGNED_TRANS_MSGID, MSGIDLIMIT_TRANS_GEN_MAX
+    };
+    word32 i;
+
+    for (i = 0; i < (word32)(sizeof(injectable) / sizeof(injectable[0])); i++) {
+        byte msg = injectable[i];
+
+        /* Baseline: allowed with the mitigation off, so the rejections
+         * below are the strict KEX gate and not some other state check. */
+        ResetSession(ssh);
+        ssh->strictKexEnabled = 0;
+        ssh->initialKexDone = 0;
+        AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, msg, WS_MSG_RECV));
+        AssertIntEQ(ssh->error, 0);
+
+        /* Negotiated, peer's NEWKEYS not yet seen: refused. */
+        ResetSession(ssh);
+        ssh->strictKexEnabled = 1;
+        ssh->initialKexDone = 0;
+        AssertFalse(wolfSSH_TestIsMessageAllowed(ssh, msg, WS_MSG_RECV));
+        AssertIntEQ(ssh->error, WS_MSGID_NOT_ALLOWED_E);
+
+        /* The gate is on the receive path only; sending one is our own
+         * business and does not desynchronize anything. */
+        ResetSession(ssh);
+        ssh->strictKexEnabled = 1;
+        ssh->initialKexDone = 0;
+        AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, msg, WS_MSG_SEND));
+
+        /* Peer's NEWKEYS arrived, so the restriction lifts. */
+        ResetSession(ssh);
+        ssh->strictKexEnabled = 1;
+        ssh->initialKexDone = 1;
+        AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, msg, WS_MSG_RECV));
+        AssertIntEQ(ssh->error, 0);
+    }
+
+    ResetSession(ssh);
+    ssh->strictKexEnabled = 0;
+    ssh->initialKexDone = 0;
+}
+
+/* A peer has to be able to tear the connection down mid-KEX, so DISCONNECT
+ * stays allowed even while the injectable messages are refused. */
+static void TestStrictKexAllowsDisconnectDuringInitialKex(WOLFSSH* ssh)
+{
+    ResetSession(ssh);
+    ssh->strictKexEnabled = 1;
+    ssh->initialKexDone = 0;
+
+    AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, MSGID_DISCONNECT,
+            WS_MSG_RECV));
+    AssertIntEQ(ssh->error, 0);
+
+    /* The KEX itself must still run, too. NEWKEYS is what lifts the gate,
+     * and the algorithm-specific exchange in between has to reach its
+     * handler or nothing ever completes. */
+    AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, MSGID_KEXINIT, WS_MSG_RECV));
+    AssertIntEQ(ssh->error, 0);
+
+    {
+        static const byte kexMsgs[] = {
+            MSGID_KEXDH_REPLY, MSGID_KEXDH_GEX_REPLY, MSGID_NEWKEYS
+        };
+        word32 i;
+
+        for (i = 0; i < (word32)(sizeof(kexMsgs) / sizeof(kexMsgs[0])); i++) {
+            ResetSession(ssh);
+            ssh->strictKexEnabled = 1;
+            ssh->initialKexDone = 0;
+            ssh->isKeying = WOLFSSH_PEER_IS_KEYING;
+            ssh->handshake = AllocHandshake(ssh);
+            ssh->handshake->expectMsgId = kexMsgs[i];
+            AssertTrue(wolfSSH_TestIsMessageAllowed(ssh, kexMsgs[i],
+                    WS_MSG_RECV));
+            AssertIntEQ(ssh->error, 0);
+        }
+    }
+
+    ResetSession(ssh);
+    ssh->strictKexEnabled = 0;
 }
 
 /* Reject USERAUTH_FAILURE with password list during keying (password-leak PoC). */
@@ -9641,15 +10150,13 @@ static void TestKeyboardResponseNullCtx(WOLFSSH* ssh)
 #endif /* WOLFSSH_KEYBOARD_INTERACTIVE */
 
 
-#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) \
-    && !defined(WOLFSSH_NO_RSA) \
-    && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
-    && !defined(WOLFSSH_NO_RSA_SHA2_256)
+/* KEXINIT payload builders. Used by the first_packet_follows coverage and by
+ * the strict KEX marker cases below, so they are guarded by what they need
+ * rather than by either caller's narrower conditions. */
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA)
 
-#define FPF_KEX_GOOD "ecdh-sha2-nistp256"
-#define FPF_KEX_BAD  "curve25519-sha256"
-#define FPF_KEY_GOOD "ssh-rsa"
-#define FPF_KEY_BAD  "rsa-sha2-256"
+#define REGRESS_KEXINIT_KEX_ALGO "ecdh-sha2-nistp256"
+#define REGRESS_KEXINIT_KEY_ALGO "ssh-rsa"
 
 /* AppendString for one of the library's own canned algorithm lists. Those are
  * built by concatenating "name," fragments, so they carry a trailing comma
@@ -9697,6 +10204,18 @@ static word32 BuildKexInitPayload(WOLFSSH* ssh, const char* kexList,
 
     return idx;
 }
+
+#endif /* KEXINIT payload builder guard */
+
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) \
+    && !defined(WOLFSSH_NO_RSA) \
+    && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
+    && !defined(WOLFSSH_NO_RSA_SHA2_256)
+
+#define FPF_KEX_GOOD "ecdh-sha2-nistp256"
+#define FPF_KEX_BAD  "curve25519-sha256"
+#define FPF_KEY_GOOD "ssh-rsa"
+#define FPF_KEY_BAD  "rsa-sha2-256"
 
 #if !defined(WOLFSSH_NO_AES_CBC) && !defined(WOLFSSH_NO_AES_CTR) \
     && !defined(WOLFSSH_NO_HMAC_SHA1) && !defined(WOLFSSH_NO_HMAC_SHA2_256)
@@ -11493,7 +12012,168 @@ static void TestDoKexInitRejectsWhenPeerIsKeying(void)
     wolfSSH_CTX_free(ctx);
 }
 
+
 #endif /* first_packet_follows coverage guard */
+
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA)
+
+/* ---- Strict KEX marker negotiation (CVE-2023-48795) ---- */
+
+#define SK_OPENSSH_S "kex-strict-s-v00@openssh.com"
+#define SK_OPENSSH_C "kex-strict-c-v00@openssh.com"
+#define SK_DRAFT_S   "kex-strict-s"
+#define SK_DRAFT_C   "kex-strict-c"
+
+typedef struct {
+    const char* description;
+    const char* peerKexList; /* what the peer put in its KEXINIT */
+    byte side;               /* endpoint under test */
+    byte sendStrictKex;      /* local opt-in */
+    byte rekey;              /* pretend a session id is already established */
+    byte expectPeerStrictKex;
+    byte expectStrictKexEnabled;
+} StrictKexMarkerCase;
+
+static const StrictKexMarkerCase strictKexMarkerCases[] = {
+    /* A peer that says nothing leaves the mitigation off. */
+    { "no marker",
+      REGRESS_KEXINIT_KEX_ALGO, WOLFSSH_ENDPOINT_SERVER, 1, 0, 0, 0 },
+
+    /* Deployed OpenSSH only ever sends the -v00@openssh.com spelling, so
+     * accepting it is what makes the mitigation work against a real peer. */
+    { "openssh marker only",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_OPENSSH_C, WOLFSSH_ENDPOINT_SERVER, 1, 0, 1, 1 },
+
+    /* draft-miller-sshm-strict-kex names it without the vendor suffix. */
+    { "draft marker only",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_DRAFT_C, WOLFSSH_ENDPOINT_SERVER, 1, 0, 1, 1 },
+
+    { "both spellings",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_OPENSSH_C "," SK_DRAFT_C,
+      WOLFSSH_ENDPOINT_SERVER, 1, 0, 1, 1 },
+
+    /* The marker is directional. A server must ignore the server-side
+     * names, which are its own to send, not the client's. */
+    { "server-side names from a client",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_OPENSSH_S "," SK_DRAFT_S,
+      WOLFSSH_ENDPOINT_SERVER, 1, 0, 0, 0 },
+
+    /* Both sides have to ask for it. */
+    { "peer asks, local opted out",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_OPENSSH_C, WOLFSSH_ENDPOINT_SERVER, 0, 0, 1, 0 },
+
+    /* draft-miller-sshm-strict-kex: the marker is meaningful only in the
+     * first KEXINIT, and a rekey carrying it must not turn anything on. */
+    { "marker in a rekey KEXINIT",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_OPENSSH_C "," SK_DRAFT_C,
+      WOLFSSH_ENDPOINT_SERVER, 1, 1, 0, 0 },
+
+    /* The client side of the same negotiation. */
+    { "client sees openssh marker",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_OPENSSH_S, WOLFSSH_ENDPOINT_CLIENT, 1, 0, 1, 1 },
+    { "client sees draft marker",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_DRAFT_S, WOLFSSH_ENDPOINT_CLIENT, 1, 0, 1, 1 },
+    { "client-side names from a server",
+      REGRESS_KEXINIT_KEX_ALGO "," SK_OPENSSH_C "," SK_DRAFT_C,
+      WOLFSSH_ENDPOINT_CLIENT, 1, 0, 0, 0 },
+};
+
+static void RunStrictKexMarkerCase(const StrictKexMarkerCase* tc)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[768];
+    word32 payloadSz;
+    word32 idx = 0;
+
+    ctx = wolfSSH_CTX_new(tc->side, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, REGRESS_KEXINIT_KEX_ALGO), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, REGRESS_KEXINIT_KEY_ALGO), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetStrictKex(ssh, tc->sendStrictKex), WS_SUCCESS);
+
+    if (tc->rekey) {
+        /* DoKexInit reads a non-empty session id as "this is a rekey". */
+        WMEMSET(ssh->sessionId, 0x5A, WC_SHA256_DIGEST_SIZE);
+        ssh->sessionIdSz = WC_SHA256_DIGEST_SIZE;
+    }
+
+    payloadSz = BuildKexInitPayload(ssh, tc->peerKexList, REGRESS_KEXINIT_KEY_ALGO, 0,
+            payload, (word32)sizeof(payload));
+
+    /* DoKexInit's tail hashes and answers the KEXINIT, which fails on a
+     * stripped-down WOLFSSH with no host key loaded. Only the negotiation
+     * this test asserts on happens before that. */
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+
+    if (ssh->peerStrictKex != tc->expectPeerStrictKex) {
+        Fail(("peerStrictKex == %u (%s)",
+                    tc->expectPeerStrictKex, tc->description),
+             ("%u", ssh->peerStrictKex));
+    }
+    if (ssh->strictKexEnabled != tc->expectStrictKexEnabled) {
+        Fail(("strictKexEnabled == %u (%s)",
+                    tc->expectStrictKexEnabled, tc->description),
+             ("%u", ssh->strictKexEnabled));
+    }
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+static void TestStrictKexMarkerNegotiation(void)
+{
+    word32 i;
+
+    for (i = 0; i < (word32)(sizeof(strictKexMarkerCases) /
+            sizeof(strictKexMarkerCases[0])); i++) {
+        RunStrictKexMarkerCase(&strictKexMarkerCases[i]);
+    }
+}
+
+/* A rekey must not clear a mitigation the initial KEX turned on, either. */
+static void TestStrictKexSurvivesRekeyKexInit(void)
+{
+    WOLFSSH_CTX* ctx;
+    WOLFSSH* ssh;
+    byte payload[768];
+    word32 payloadSz;
+    word32 idx = 0;
+
+    ctx = wolfSSH_CTX_new(WOLFSSH_ENDPOINT_SERVER, NULL);
+    AssertNotNull(ctx);
+
+    ssh = wolfSSH_new(ctx);
+    AssertNotNull(ssh);
+
+    AssertIntEQ(wolfSSH_SetAlgoListKex(ssh, REGRESS_KEXINIT_KEX_ALGO), WS_SUCCESS);
+    AssertIntEQ(wolfSSH_SetAlgoListKey(ssh, REGRESS_KEXINIT_KEY_ALGO), WS_SUCCESS);
+
+    /* Established session, strict KEX already negotiated. */
+    WMEMSET(ssh->sessionId, 0x5A, WC_SHA256_DIGEST_SIZE);
+    ssh->sessionIdSz = WC_SHA256_DIGEST_SIZE;
+    ssh->peerStrictKex = 1;
+    ssh->strictKexEnabled = 1;
+
+    /* A rekey KEXINIT that no longer carries the marker, which is what a
+     * conforming peer sends. */
+    payloadSz = BuildKexInitPayload(ssh, REGRESS_KEXINIT_KEX_ALGO, REGRESS_KEXINIT_KEY_ALGO, 0,
+            payload, (word32)sizeof(payload));
+    (void)wolfSSH_TestDoKexInit(ssh, payload, payloadSz, &idx);
+
+    AssertIntEQ(ssh->peerStrictKex, 1);
+    AssertIntEQ(ssh->strictKexEnabled, 1);
+
+    wolfSSH_free(ssh);
+    wolfSSH_CTX_free(ctx);
+}
+
+#endif /* strict KEX marker guard */
+
 
 
 /* Regression coverage for issue 5575: the documented ssh://hostname form must
@@ -12094,6 +12774,8 @@ int main(int argc, char** argv)
     TestKnownHostsLastEntry();
 #endif
     TestAuthMessageBlockedDuringKeying(ssh);
+    TestStrictKexBlocksInjectableMessages(ssh);
+    TestStrictKexAllowsDisconnectDuringInitialKex(ssh);
     TestUserauthFailureDuringKeying(ssh);
     TestPasswordLeakAborts(ssh);
     TestPrematureUserauthSuccess(ssh);
@@ -12247,6 +12929,10 @@ int main(int argc, char** argv)
     TestKexInitLanguageLengthOverflow();
     TestDoKexInitRejectsWhenPeerIsKeying();
 #endif
+#if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA)
+    TestStrictKexMarkerNegotiation();
+    TestStrictKexSurvivesRekeyKexInit();
+#endif
 #if !defined(WOLFSSH_NO_ECDH_SHA2_NISTP256) && !defined(WOLFSSH_NO_RSA) \
     && !defined(WOLFSSH_NO_CURVE25519_SHA256) \
     && !defined(WOLFSSH_NO_RSA_SHA2_256) \
@@ -12337,6 +13023,14 @@ int main(int argc, char** argv)
     TestKexDhGexGroupShrunkPrimeSendsDisconnect();
     TestKexDhGexGroupBadGeneratorSendsDisconnect();
     #endif
+    /* Strict KEX, the Terrapin mitigation (CVE-2023-48795) */
+    TestStrictKexNegotiatedByDefault();
+    TestStrictKexClientOptOut();
+    TestStrictKexServerOptOut();
+    TestStrictKexMarkerNotSentOnRekey();
+    TestStrictKexResetsSequenceNumbers();
+    TestTerrapinInjectionAcceptedWithoutStrictKex();
+    TestTerrapinInjectionRejectedWithStrictKex();
 #endif
 
 #ifdef WOLFSSH_SFTP

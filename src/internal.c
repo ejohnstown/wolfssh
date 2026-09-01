@@ -528,7 +528,7 @@ const char* GetErrorString(int err)
             return "not a regular file";
 
         case WS_MSGID_NOT_ALLOWED_E:
-            return "message not allowed before user authentication";
+            return "message ID not allowed at this point in the connection";
 
         case WS_ED25519_E:
             return "Ed25519 buffer error";
@@ -953,15 +953,19 @@ INLINE static int IsMessageAllowedClient(WOLFSSH *ssh, byte msg)
  * Returns 1 if allowed 0 if not allowed. */
 INLINE static int IsMessageAllowed(WOLFSSH *ssh, byte msg, byte state)
 {
-    /* Strict KEX (Terrapin mitigation). IGNORE, DEBUG, and UNIMPLEMENTED
-     * are otherwise allowed at any time, but during the initial KEX an
-     * injected one shifts the peer's sequence number, which is the whole
-     * attack. Refuse them until the peer's NEWKEYS lands. DISCONNECT stays
-     * allowed so a peer can still tear the connection down. */
+    /* Strict KEX (Terrapin mitigation). Nothing in the initial KEX is
+     * authenticated, so any packet spliced into it shifts the receiver's
+     * sequence number, and that shift is the attack. Take an allow list
+     * rather than name the messages to refuse: until the peer's NEWKEYS
+     * lands, the only things it can legitimately send are DISCONNECT and
+     * the key exchange itself. IGNORE, DEBUG, UNIMPLEMENTED, EXT_INFO and
+     * the unassigned transport IDs are all otherwise accepted here, and
+     * every one of them counts against peerSeq. DISCONNECT stays allowed
+     * so a peer can still tear the connection down. */
     if (state == WS_MSG_RECV && ssh->strictKexEnabled &&
             !ssh->initialKexDone) {
-        if (msg == MSGID_IGNORE || msg == MSGID_DEBUG ||
-                msg == MSGID_UNIMPLEMENTED) {
+        if (msg != MSGID_DISCONNECT && msg != MSGID_KEXINIT &&
+                msg != MSGID_NEWKEYS && !MSGIDLIMIT_TRANS_KEX(msg)) {
             WLOG(WS_LOG_DEBUG,
                     "Message ID %u not allowed during the initial strict KEX",
                     msg);
@@ -1347,6 +1351,7 @@ WOLFSSH_CTX* CtxInit(WOLFSSH_CTX* ctx, byte side, void* heap)
     ctx->windowSz = DEFAULT_WINDOW_SZ;
     ctx->maxPacketSz = DEFAULT_MAX_PACKET_SZ;
     ctx->maxAuthAttempts = DEFAULT_MAX_AUTH_ATTEMPTS;
+    ctx->sendStrictKex = 1; /* default-enabled, callers can opt out */
     ctx->sshProtoIdStr = sshProtoIdStr;
     ctx->algoListKex = cannedKexAlgoNames;
     if (side == WOLFSSH_ENDPOINT_CLIENT) {
@@ -1689,7 +1694,7 @@ WOLFSSH* SshInit(WOLFSSH* ssh, WOLFSSH_CTX* ctx)
     ssh->acceptState = ACCEPT_BEGIN;
     ssh->clientState = CLIENT_BEGIN;
     ssh->isKeying    = 0; /* initial state of not keying yet */
-    ssh->sendStrictKex = 1; /* default-enabled, can be disabled at runtime */
+    ssh->sendStrictKex = ctx->sendStrictKex;
     ssh->authId      = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[0] = ID_USERAUTH_PUBLICKEY;
     ssh->supportedAuth[1] = ID_USERAUTH_PASSWORD;
@@ -13276,6 +13281,20 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
     }
 
     msgAllowed = IsMessageAllowed(ssh, msg, WS_MSG_RECV);
+
+    if (!msgAllowed && ssh->strictKexEnabled && !ssh->initialKexDone) {
+        /* Strict KEX calls for terminating the connection, not just
+         * dropping the packet, so tell the peer why on the way out. Every
+         * refused id ends it here, the unassigned ones an UNIMPLEMENTED
+         * would otherwise answer included. The error is relatched because
+         * the send path can overwrite it. */
+        if (!ssh->disconnected) {
+            (void)SendDisconnect(ssh,
+                    WOLFSSH_DISCONNECT_KEY_EXCHANGE_FAILED);
+            ssh->error = WS_MSGID_NOT_ALLOWED_E;
+        }
+        return WS_MSGID_NOT_ALLOWED_E;
+    }
 
     if (!msgAllowed && (MsgIdKnown(msg) || MSGIDLIMIT_POST_USERAUTH(msg))) {
         /* RFC 4252 section 6: disconnect on a known id at the wrong time,
