@@ -4300,6 +4300,16 @@ static int test_DoChannelData_overflow(void)
         0x00
     };
 
+    /* Channel id=0, dataSz=32, but only 8 payload bytes: GetSize() must
+     * reject the size before anything reads past the buffer. Pins the
+     * invariant DoChannelData() relies on in place of its own check. */
+    static const byte payShort[] = {
+        0x00, 0x00, 0x00, 0x00,   /* channelId = 0  */
+        0x00, 0x00, 0x00, 0x20,   /* dataSz = 32    */
+        /* only 8 payload bytes follow */
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+
     /* Channel id=0, dataSz=32 (< maxPacketSz of 64): within-limit case. */
     static const byte payOk[] = {
         0x00, 0x00, 0x00, 0x00,   /* channelId = 0  */
@@ -4338,6 +4348,13 @@ static int test_DoChannelData_overflow(void)
     ret = wolfSSH_TestDoChannelData(ssh, (byte*)payOk,
                                     (word32)sizeof(payOk), &idx);
     if (ret != WS_CHAN_RXD) { result = -551; goto done; }
+
+    /* dataSz=32 with 8 bytes left -> WS_BUFFER_E out of GetSize() */
+    idx = 0;
+    ret = wolfSSH_TestDoChannelData(ssh, (byte*)payShort,
+                                    (word32)sizeof(payShort), &idx);
+    if (ret != WS_BUFFER_E) { result = -552; goto done; }
+    if (idx != 0) { result = -553; goto done; }
 
 done:
     wolfSSH_free(ssh);

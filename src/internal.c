@@ -12976,13 +12976,7 @@ static int DoChannelData(WOLFSSH* ssh,
     ret = GetUint32(&channelId, buf, len, &begin);
     if (ret == WS_SUCCESS)
         ret = GetSize(&dataSz, buf, len, &begin);
-
-    /* Validate dataSz */
-    if (ret == WS_SUCCESS) {
-        if (len < begin) {
-            ret = WS_RECV_OVERFLOW_E;
-        }
-    }
+    /* GetSize() already enforced dataSz <= len - begin. */
 
     if (ret == WS_SUCCESS) {
         *idx = begin + dataSz;
