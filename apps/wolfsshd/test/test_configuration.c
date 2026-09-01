@@ -308,7 +308,10 @@ static int test_ParseConfigLine(void)
         /* The option matcher requires whitespace (or end of line) after the
          * matched name, so an unknown name that extends a real one must not
          * prefix-match it. Ignore-unknown builds accept such lines with a
-         * warning, so only assert rejection where it is observable. */
+         * warning, so only assert rejection where it is observable. The
+         * end-of-line arm lets a keyword alone on a line still match; the
+         * standalone checks below pin that, and the OpenSSH spelling that
+         * prompted the rule. */
     #ifndef WOLFSSH_IGNORE_UNKNOWN_CONFIG
         {"Unknown extension of Port", "PortFoo 22", 1},
         {"Unknown extension of HostKey", "HostKeyFoo /tmp/x", 1},
@@ -414,6 +417,57 @@ static int test_ParseConfigLine(void)
             }
         }
         wolfSSHD_ConfigFree(conf);
+    }
+
+    /* States the bug directly, and holds however the build treats an
+     * unknown keyword: "HostKeyAlgorithms" used to match "HostKey" and
+     * leave "ssh-rsa" as the host key file name. */
+    if (ret == WS_SUCCESS) {
+        conf = wolfSSHD_ConfigNew(NULL);
+        if (conf == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            const char* line = "HostKeyAlgorithms ssh-rsa";
+
+            Log("    Testing scenario: HostKeyAlgorithms leaves HostKey "
+                "unset.");
+            (void)ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0);
+            if (wolfSSHD_ConfigGetHostKeyFile(conf) == NULL) {
+                Log(" PASSED.\n");
+            }
+            else {
+                Log(" FAILED.\n");
+                ret = WS_FATAL_ERROR;
+            }
+            wolfSSHD_ConfigFree(conf);
+        }
+    }
+
+    /* The end-of-line arm: a keyword alone on a line still matches, then
+     * fails for want of a value. Assert the code, not just failure. Only
+     * the matched path reaches HandleStrictModes and returns
+     * WS_BAD_ARGUMENT; an unknown keyword gives WS_FATAL_ERROR, or
+     * WS_SUCCESS where the build ignores unknown options. */
+    if (ret == WS_SUCCESS) {
+        conf = wolfSSHD_ConfigNew(NULL);
+        if (conf == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            const char* line = "StrictModes";
+
+            Log("    Testing scenario: bare keyword matches, then fails.");
+            if (ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0)
+                    == WS_BAD_ARGUMENT) {
+                Log(" PASSED.\n");
+            }
+            else {
+                Log(" FAILED.\n");
+                ret = WS_FATAL_ERROR;
+            }
+            wolfSSHD_ConfigFree(conf);
+        }
     }
 
     return ret;
