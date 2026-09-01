@@ -340,6 +340,20 @@ static int test_ParseConfigLine(void)
         {"Strict modes yes", "StrictModes yes", 0},
         {"Strict modes invalid", "StrictModes wolfsshd", 1},
 
+        /* Whole-keyword matching tests. A longer keyword that starts with
+         * a supported one must not match it. Both take the unknown-keyword
+         * path, which is only an error when the build does not ignore
+         * unknown options. "Banner" is the no-separator case because it
+         * stores its value unvalidated, so without the boundary check the
+         * line parses clean and the vector fails. */
+#ifndef WOLFSSH_IGNORE_UNKNOWN_CONFIG
+        {"Longer keyword sharing a prefix", "HostKeyAlgorithms ssh-rsa", 1},
+        {"Prefix with no separator", "Bannerfoo /etc/issue", 1},
+#endif
+        /* Reaches the end-of-line arm of the boundary check: the keyword
+         * still matches, then fails for want of a value. */
+        {"Bare keyword, no newline", "StrictModes", 1},
+
         /* Include files tests. */
         {"Include file bad", "Include sshd_config.d/test.bad", 1},
         {"Include file exists", "Include sshd_config.d/01-test.conf", 0},
@@ -373,6 +387,31 @@ static int test_ParseConfigLine(void)
             }
         }
         wolfSSHD_ConfigFree(conf);
+    }
+
+    /* States the bug directly, and holds however the build treats an
+     * unknown keyword: "HostKeyAlgorithms" used to match "HostKey" and
+     * leave "ssh-rsa" as the host key file name. */
+    if (ret == WS_SUCCESS) {
+        conf = wolfSSHD_ConfigNew(NULL);
+        if (conf == NULL) {
+            ret = WS_MEMORY_E;
+        }
+        else {
+            const char* line = "HostKeyAlgorithms ssh-rsa";
+
+            Log("    Testing scenario: HostKeyAlgorithms leaves HostKey "
+                "unset.");
+            (void)ParseConfigLine(&conf, line, (int)WSTRLEN(line), 0);
+            if (wolfSSHD_ConfigGetHostKeyFile(conf) == NULL) {
+                Log(" PASSED.\n");
+            }
+            else {
+                Log(" FAILED.\n");
+                ret = WS_FATAL_ERROR;
+            }
+            wolfSSHD_ConfigFree(conf);
+        }
     }
 
     return ret;
