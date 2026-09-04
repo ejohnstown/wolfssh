@@ -9378,6 +9378,13 @@ static void TestClientBuffersIdempotent(void)
 }
 #endif
 
+/* Windows has no /dev/null; the null device there is "NUL". */
+#ifdef USE_WINDOWS_API
+    #define TEST_NULL_DEVICE   "NUL"
+#else
+    #define TEST_NULL_DEVICE   "/dev/null"
+#endif
+
 /* Simulate Ctrl+D (stdin EOF) during password prompt; expect failure but no crash. */
 static void TestPasswordEofNoCrash(void)
 {
@@ -9392,7 +9399,7 @@ static void TestPasswordEofNoCrash(void)
 
     savedStdin = dup(STDIN_FILENO);
     AssertTrue(savedStdin >= 0);
-    devNull = open("/dev/null", O_RDONLY);
+    devNull = open(TEST_NULL_DEVICE, O_RDONLY);
     AssertTrue(devNull >= 0);
     AssertTrue(dup2(devNull, STDIN_FILENO) >= 0);
 
@@ -13442,7 +13449,7 @@ static void TestKnownHostsLastEntry(void)
      * Check each step, otherwise a failure here leaves the prompt reading
      * the real stdin. */
     savedStdin = dup(STDIN_FILENO);
-    devNull = open("/dev/null", O_RDONLY);
+    devNull = open(TEST_NULL_DEVICE, O_RDONLY);
     ready = ready && (savedStdin >= 0) && (devNull >= 0)
             && (dup2(devNull, STDIN_FILENO) >= 0);
     AssertTrue(ready);
