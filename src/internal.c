@@ -13165,12 +13165,15 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_DEBUG, "  command = %s", channel->command);
             else
                 WLOG(WS_LOG_DEBUG, "  command = %s", "<bad value>");
-            channel->sessionType = WOLFSSH_SESSION_EXEC;
-            if (ssh->ctx->channelReqExecCb) {
-                rej = ssh->ctx->channelReqExecCb(channel, ssh->channelReqCtx);
-            }
-            else {
-                rej = ssh->appChannels;
+            if (ret == WS_SUCCESS) {
+                channel->sessionType = WOLFSSH_SESSION_EXEC;
+                if (ssh->ctx->channelReqExecCb) {
+                    rej = ssh->ctx->channelReqExecCb(channel,
+                            ssh->channelReqCtx);
+                }
+                else {
+                    rej = ssh->appChannels;
+                }
             }
             sessionReq = 1;
             ssh->clientState = CLIENT_DONE;
@@ -13183,12 +13186,15 @@ static int DoChannelRequest(WOLFSSH* ssh,
                 WLOG(WS_LOG_DEBUG, "  subsystem = %s", channel->command);
             else
                 WLOG(WS_LOG_DEBUG, "  subsystem = %s", "<bad value>");
-            channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
-            if (ssh->ctx->channelReqSubsysCb) {
-                rej = ssh->ctx->channelReqSubsysCb(channel, ssh->channelReqCtx);
-            }
-            else {
-                rej = ssh->appChannels;
+            if (ret == WS_SUCCESS) {
+                channel->sessionType = WOLFSSH_SESSION_SUBSYSTEM;
+                if (ssh->ctx->channelReqSubsysCb) {
+                    rej = ssh->ctx->channelReqSubsysCb(channel,
+                            ssh->channelReqCtx);
+                }
+                else {
+                    rej = ssh->appChannels;
+                }
             }
             sessionReq = 1;
             ssh->clientState = CLIENT_DONE;
