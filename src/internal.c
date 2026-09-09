@@ -13127,8 +13127,7 @@ static int DoChannelRequest(WOLFSSH* ssh,
         WLOG(WS_LOG_DEBUG, "Leaving DoChannelRequest(), ret = %d", ret);
         return ret;
     }
-
-    if (ret == WS_SUCCESS) {
+    else {
         channel = ChannelFind(ssh, channelId, WS_CHANNEL_ID_SELF);
         if (channel == NULL)
             ret = WS_INVALID_CHANID;
