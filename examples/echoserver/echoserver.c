@@ -1148,6 +1148,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
     {
         /* Parent process */
+        int wantWrite = 0;
 #ifdef WOLFSSH_AGENT
         WS_SOCKET_T agentFd = -1;
         word32 agentChannelId = -1;
@@ -1161,6 +1162,8 @@ static int ssh_worker(thread_ctx_t* threadCtx)
 
         while (ChildRunning) {
             fd_set readFds;
+            fd_set writeFds;
+            int writable;
             WS_SOCKET_T maxFd;
             int cnt_r;
             int cnt_w;
@@ -1168,6 +1171,10 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             FD_ZERO(&readFds);
             FD_SET(sshFd, &readFds);
             maxFd = sshFd;
+
+            FD_ZERO(&writeFds);
+            if (wantWrite)
+                FD_SET(sshFd, &writeFds);
 
             #ifdef WOLFSSH_AGENT
             /* The peer's auth-agent-req lands after wolfSSH_accept() has
@@ -1221,12 +1228,15 @@ static int ssh_worker(thread_ctx_t* threadCtx)
             }
             #endif /* WOLFSSH_FWD */
 
-            rc = select((int)maxFd + 1, &readFds, NULL, NULL, NULL);
+            rc = select((int)maxFd + 1, &readFds,
+                    wantWrite ? &writeFds : NULL, NULL, NULL);
             if (rc == -1) {
                 break;
             }
+            writable = wantWrite && FD_ISSET(sshFd, &writeFds);
+            wantWrite = 0;
 
-            if (FD_ISSET(sshFd, &readFds)) {
+            if (FD_ISSET(sshFd, &readFds) || writable) {
                 word32 lastChannel = 0;
 
                 /* The following tries to read from the first channel inside
@@ -1459,6 +1469,14 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                     else if (rc == WS_EOF) {
                         /* The half-close is answered by the durable check
                          * above, which has already run this pass. */
+                        continue;
+                    }
+                    else if (rc == WS_WANT_WRITE) {
+                        /* The send is owed, not lost: wait for the socket to
+                         * take it. Application-driven mode answers session
+                         * requests here, so a blocked reply would otherwise
+                         * end a session accept() used to carry through. */
+                        wantWrite = 1;
                         continue;
                     }
                     else if (rc != WS_WANT_READ) {
