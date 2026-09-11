@@ -907,8 +907,13 @@ static int wsSubsysStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
         type = wolfSSH_ChannelGetSessionType(channel);
 
         /* A truncated subsystem string leaves the command NULL, and this
-         * runs before anything else has looked at it. */
+         * runs before anything else has looked at it. The name matches
+         * whole, length and bytes, as wolfSSH_SFTP_accept() asks: granting
+         * sftp with an embedded NUL answers success on a session it then
+         * refuses. */
         if (type == WOLFSSH_SESSION_SUBSYSTEM && cmd != NULL
+                && wolfSSH_ChannelGetSessionCommandSz(channel)
+                        == (word32)WSTRLEN("sftp")
                 && WSTRCMP(cmd, "sftp") == 0) {
             threadCtx->doSftp = 1;
             rej = WS_SUCCESS;
@@ -934,7 +939,8 @@ static int wsExecStartCb(WOLFSSH_CHANNEL* channel, void* vCtx)
         }
 
 #ifdef WOLFSSH_SCP
-        if (cmd != NULL && WSTRNCMP(cmd, "scp ", 4) == 0) {
+        /* The prefix ChannelCommandIsScp() matches, so both modes agree. */
+        if (cmd != NULL && WSTRNCMP(cmd, "scp", 3) == 0) {
             ((thread_ctx_t*)vCtx)->doScp = 1;
             rej = WS_SUCCESS;
         }
@@ -1455,7 +1461,7 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                          * above, which has already run this pass. */
                         continue;
                     }
-                    else if (rc != WS_WANT_READ && rc != WS_REKEYING) {
+                    else if (rc != WS_WANT_READ) {
                         #ifdef SHELL_DEBUG
                             printf("Break:read sshFd returns %d: errno =%x\n",
                                     cnt_r, errno);
