@@ -2811,6 +2811,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
         forcedCmd = subCmd;
     }
 
+    /* A pty session has no stderr stream of its own -- the child's error
+     * output comes back on the terminal with the rest -- so there is never
+     * anything there for the loop to wait on. */
+    if (ptyReq && forcedCmd == NULL) {
+        stderrEmpty = 1;
+    }
+
     if (forcedCmd != NULL && WSTRCMP(forcedCmd, "internal-sftp") == 0) {
         wolfSSH_Log(WS_LOG_ERROR,
                                 "[SSHD] Only SFTP connections allowed for user "
@@ -3082,7 +3089,13 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
     (void)SHELL_SetNonBlocking((!ptyReq || forcedCmd) ?
             stdinPipe[1] : childFd);
 
-    while (ChildRunning || backlog.len || !stdoutEmpty || peerConnected) {
+    /* stderr is waited on the same as stdout: a child that has exited with
+     * its error output still in the pipe has not been relayed yet, and the
+     * drain after the loop reads one bufferful, not the rest. A background
+     * process still holding either write end keeps the session open until it
+     * lets go; that is deliberate, and what OpenSSH does too. */
+    while (ChildRunning || backlog.len || !stdoutEmpty || !stderrEmpty
+            || peerConnected) {
         byte tmp[2];
         fd_set readFds;
         fd_set writeFds;
@@ -3176,7 +3189,7 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
                 noWait.tv_usec = 0;
                 timeout = &noWait;
             }
-            else if (stdoutEmpty && !backlog.len) {
+            else if (stdoutEmpty && stderrEmpty && !backlog.len) {
                 /* The child's output is drained and nothing is held. With the
                  * child gone the foot of the loop ends the session this pass,
                  * so do not wait on a peer that has nothing left to send.
@@ -3530,7 +3543,8 @@ static int SHELL_Subsystem(WOLFSSHD_CONNECTION* conn, WOLFSSH* ssh,
             }
         }
 
-        if (!ChildRunning && peerConnected && stdoutEmpty && !backlog.len) {
+        if (!ChildRunning && peerConnected && stdoutEmpty && stderrEmpty
+                && !backlog.len) {
             peerConnected = 0;
         }
     }
