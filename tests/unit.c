@@ -45,7 +45,6 @@
 /* The Ed25519 key DER helpers arrive with asn.h, but that include is RSA-only
  * and the Ed25519 tests do not need RSA. */
 #include <wolfssl/wolfcrypt/asn_public.h>
-#include <wolfssh/blowfish.h>
 #include <wolfssh/pbkdf-bcrypt.h>
 
 #define WOLFSSH_TEST_HEX2BIN
@@ -1105,21 +1104,21 @@ static int test_Blowfish(void)
         c32toa(tv->key[0], (byte*)key);
         c32toa(tv->key[1], (byte*)key+4);
 
-        blf_key_init(&c, key, 8);
+        wolfSSH_TestBlfKeyInit(&c, key, 8);
         value[0] = tv->plain[0];
         value[1] = tv->plain[1];
-        blf_enc(&c, value, 1);
-        blf_key_cleanup(&c);
+        wolfSSH_TestBlfEnc(&c, value, 1);
+        wolfSSH_TestBlfKeyCleanup(&c);
         if (value[0] != tv->cipher[0] && value[1] != tv->cipher[1]) {
             fprintf(stderr, "\ttest case %u encrypt failed\n", i);
             ret |= 1;
         }
 
-        blf_key_init(&c, key, 8);
+        wolfSSH_TestBlfKeyInit(&c, key, 8);
         value[0] = tv->cipher[0];
         value[1] = tv->cipher[1];
-        blf_dec(&c, value, 1);
-        blf_key_cleanup(&c);
+        wolfSSH_TestBlfDec(&c, value, 1);
+        wolfSSH_TestBlfKeyCleanup(&c);
         if (value[0] != tv->plain[0] && value[1] != tv->plain[1]) {
             fprintf(stderr, "\ttest case %u decrypt failed\n", i);
             ret |= 1;
