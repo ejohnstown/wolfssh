@@ -1204,6 +1204,8 @@ struct WOLFSSH {
     void* channelCloseCtx; /* Channel Close CB context */
     void* fs;              /* File system handle */
     word32 curSz;
+    word32 discardSz;      /* offset of a rejected packet's discard MAC */
+    int discardError;      /* error reported when the discard ends */
     word32 seq;
     word32 peerSeq;
     word32 packetStartIdx; /* Current send packet start index */
@@ -1932,7 +1934,8 @@ enum ProcessReplyStates {
     PROCESS_INIT,
     PROCESS_PACKET_LENGTH,
     PROCESS_PACKET_FINISH,
-    PROCESS_PACKET
+    PROCESS_PACKET,
+    PROCESS_DISCARD
 };
 
 

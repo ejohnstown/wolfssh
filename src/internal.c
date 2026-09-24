@@ -14601,6 +14601,64 @@ static INLINE int DecryptAead(WOLFSSH* ssh, byte* plain,
 #endif /* WOLFSSH_NO_AEAD */
 
 
+#ifndef WOLFSSH_NO_AES_CBC
+/* Reads a rejected packet out to MAX_PACKET_SZ bytes and runs the MAC over
+ * the rest before failing. The byte count at failure is fixed, and so is the
+ * MAC work for each kind of rejection, whatever the decrypted length. */
+static int DiscardPacket(WOLFSSH* ssh)
+{
+    byte mac[MAX_HMAC_SZ];
+    int ret;
+
+    ret = GetInputData(ssh, MAX_PACKET_SZ);
+    if (ret < 0) {
+        /* Past a want-read the discard is over; report the rejection. */
+        if (ssh->error != WS_WANT_READ)
+            ssh->error = ssh->discardError;
+        return ret;
+    }
+
+    WMEMSET(mac, 0, sizeof(mac));
+    (void)VerifyMac(ssh,
+            ssh->inputBuffer.buffer + ssh->inputBuffer.idx + ssh->discardSz,
+            MAX_PACKET_SZ - ssh->discardSz, mac);
+
+    WLOG(WS_LOG_DEBUG, "Discarded rejected packet");
+    ssh->error = ssh->discardError;
+    return WS_FATAL_ERROR;
+}
+#endif /* WOLFSSH_NO_AES_CBC */
+
+
+/* Fails a packet with error. Under CBC the length check and the MAC are an
+ * oracle on the decrypted length (Albrecht, Paterson and Watson, 2009), so
+ * the packet is discarded as OpenSSH does. doneSz is how far into the packet
+ * the discard's MAC starts: the first block, or the whole packet once its
+ * MAC has run. */
+static int RejectPacket(WOLFSSH* ssh, word32 doneSz, int error)
+{
+#ifndef WOLFSSH_NO_AES_CBC
+    if (ssh->peerEncryptId == ID_AES128_CBC
+            || ssh->peerEncryptId == ID_AES192_CBC
+            || ssh->peerEncryptId == ID_AES256_CBC) {
+        if (doneSz > (word32)MAX_PACKET_SZ)
+            doneSz = (word32)MAX_PACKET_SZ;
+        WLOG(WS_LOG_DEBUG, "Discarding rejected packet, error %d", error);
+        /* ssh->error carries want-read during the discard. */
+        ssh->discardSz = doneSz;
+        ssh->discardError = error;
+        ssh->processReplyState = PROCESS_DISCARD;
+        return DiscardPacket(ssh);
+    }
+#else
+    WOLFSSH_UNUSED(doneSz);
+#endif
+
+    ssh->error = error;
+    return WS_FATAL_ERROR;
+}
+
+
 int DoReceive(WOLFSSH* ssh)
 {
     int ret = WS_SUCCESS;
@@ -14647,8 +14705,7 @@ int DoReceive(WOLFSSH* ssh)
             if (ssh->curSz > MAX_PACKET_SZ - (word32)peerMacSz - UINT32_SZ) {
                 WLOG(WS_LOG_DEBUG, "Packet length overflow: size = %u",
                         ssh->curSz);
-                ssh->error = WS_OVERFLOW_E;
-                return WS_FATAL_ERROR;
+                return RejectPacket(ssh, peerBlockSz, WS_OVERFLOW_E);
             }
 
             /* RFC 4253 section 6 aligns packet_length through the padding
@@ -14662,8 +14719,7 @@ int DoReceive(WOLFSSH* ssh)
                         "Packet not block aligned: aligned size = %u, "
                         "block = %u, aead = %u",
                         alignSz, (word32)alignBlockSz, (word32)aeadMode);
-                ssh->error = WS_BUFFER_E;
-                return WS_FATAL_ERROR;
+                return RejectPacket(ssh, peerBlockSz, WS_BUFFER_E);
             }
             ssh->processReplyState = PROCESS_PACKET_FINISH;
             FALL_THROUGH;
@@ -14706,8 +14762,7 @@ int DoReceive(WOLFSSH* ssh)
                     }
                     if (verifyResult != WS_SUCCESS) {
                         WLOG(WS_LOG_DEBUG, "PR: VerifyMac fail");
-                        ssh->error = verifyResult;
-                        return WS_FATAL_ERROR;
+                        return RejectPacket(ssh, readSz, verifyResult);
                     }
                 }
                 else {
@@ -14744,6 +14799,11 @@ int DoReceive(WOLFSSH* ssh)
                 ret = WS_FATAL_ERROR;
             }
             break;
+
+#ifndef WOLFSSH_NO_AES_CBC
+        case PROCESS_DISCARD:
+            return DiscardPacket(ssh);
+#endif
 
         default:
             WLOG(WS_LOG_DEBUG, "Bad process input state, program error");
