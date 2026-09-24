@@ -153,11 +153,14 @@ WOLFSSH_API void* wolfSSH_GetScpSendCtx(WOLFSSH* ssh);
 /* NULL ssh or message returns WS_BAD_ARGUMENT */
 WOLFSSH_API int   wolfSSH_SetScpErrorMsg(WOLFSSH* ssh, const char* message);
 
+#ifndef NO_WOLFSSH_CLIENT
 WOLFSSH_API int   wolfSSH_SCP_connect(WOLFSSH* ssh, byte* cmd);
 WOLFSSH_API int   wolfSSH_SCP_to(WOLFSSH* ssh, const char* src,
         const char* dst);
 WOLFSSH_API int   wolfSSH_SCP_from(WOLFSSH* ssh, const char* src,
         const char* dst);
+#endif
+#ifndef NO_WOLFSSH_SERVER
 /* Server side. Drives an SCP transfer on a channel whose "exec scp ..."
  * command is already bound. This is the same work wolfSSH_accept() does
  * through its WS_SCP_INIT re-entry, exposed so an application can start the
@@ -169,6 +172,7 @@ WOLFSSH_API int   wolfSSH_SCP_from(WOLFSSH* ssh, const char* src,
  * socket it returns WS_WANT_READ or WS_WANT_WRITE with the transfer part
  * done; call it again on the same session until it completes. */
 WOLFSSH_API int   wolfSSH_SCP_accept(WOLFSSH* ssh);
+#endif
 
 /* Tells an SCP request from an ordinary exec, for use from an exec
  * channel-request callback and by wolfSSH_accept() itself, so the two
