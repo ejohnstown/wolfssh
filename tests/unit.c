@@ -10234,6 +10234,63 @@ done:
 
 #endif /* NO_WOLFSSH_SERVER */
 
+/* CreateMpint() strips leading zeros, keeping one 0 in front of a set MSB
+ * instead of asking for a pad byte. */
+static int test_CreateMpint(void)
+{
+    static const struct {
+        byte in[4];
+        word32 inSz;
+        byte out[4];
+        word32 outSz;
+        byte pad;
+    } cases[] = {
+        { {0x00},                   1, {0},                      0, 0 },
+        { {0x00, 0x00, 0x00},       3, {0},                      0, 0 },
+        { {0x7F},                   1, {0x7F},                   1, 0 },
+        { {0x80},                   1, {0x80},                   1, 1 },
+        { {0xFF, 0x01},             2, {0xFF, 0x01},             2, 1 },
+        { {0x00, 0x7F},             2, {0x7F},                   1, 0 },
+        { {0x00, 0x80},             2, {0x00, 0x80},             2, 0 },
+        { {0x00, 0x00, 0x7F, 0x01}, 4, {0x7F, 0x01},             2, 0 },
+        { {0x00, 0x00, 0x80, 0x01}, 4, {0x00, 0x80, 0x01},       3, 0 },
+        { {0x01, 0x80, 0x00, 0x00}, 4, {0x01, 0x80, 0x00, 0x00}, 4, 0 },
+    };
+    byte buf[4];
+    word32 i, sz;
+    byte pad;
+    int ret;
+    int result = 0;
+
+    for (i = 0; i < (word32)(sizeof(cases) / sizeof(cases[0])); i++) {
+        WMEMCPY(buf, cases[i].in, sizeof(buf));
+        sz = cases[i].inSz;
+        pad = 0xAA;
+        ret = wolfSSH_TestCreateMpint(buf, &sz, &pad);
+        if (ret != WS_SUCCESS || sz != cases[i].outSz
+                || pad != cases[i].pad
+                || WMEMCMP(buf, cases[i].out, sz) != 0) {
+            printf("CreateMpint: case %u ret=%d sz=%u pad=%u\n",
+                    i, ret, sz, pad);
+            result = -1450;
+        }
+    }
+
+    /* An empty input is an empty mpint and still sets pad. */
+    sz = 0;
+    pad = 0xAA;
+    ret = wolfSSH_TestCreateMpint(buf, &sz, &pad);
+    if (ret != WS_SUCCESS || sz != 0 || pad != 0)
+        result = -1451;
+
+    if (wolfSSH_TestCreateMpint(NULL, &sz, &pad) != WS_BAD_ARGUMENT
+            || wolfSSH_TestCreateMpint(buf, NULL, &pad) != WS_BAD_ARGUMENT
+            || wolfSSH_TestCreateMpint(buf, &sz, NULL) != WS_BAD_ARGUMENT)
+        result = -1452;
+
+    return result;
+}
+
 /* BuildNameList() returns a C string. On an empty id list it must still
  * terminate the buffer: SendKexInit() measures the result with WSTRLEN
  * through AlgoListSz() and copies that many bytes into the KEXINIT. */
@@ -23220,6 +23277,11 @@ int wolfSSH_UnitTest(int argc, char** argv)
            (unitResult == 0 ? "SUCCESS" : "FAILED"));
     testResult = testResult || unitResult;
 #endif /* NO_WOLFSSH_SERVER */
+
+    unitResult = test_CreateMpint();
+    printf("CreateMpint: %s\n",
+           (unitResult == 0 ? "SUCCESS" : "FAILED"));
+    testResult = testResult || unitResult;
 
     unitResult = test_BuildNameList_emptySrc();
     printf("BuildNameList_emptySrc: %s\n",
