@@ -1350,6 +1350,7 @@ struct WOLFSSH {
     byte userAuthPkDone;
     byte sendExtInfo;
     byte extInfoSent; /* track if the ext info has already been sent */
+    byte peerSigAlgsSeen; /* peer sent server-sig-algs, even an unusable one */
     byte* peerSigId;
     word32 peerSigIdSz;
 
