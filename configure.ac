@@ -160,6 +160,11 @@ AC_ARG_ENABLE([keygen],
     [AS_HELP_STRING([--enable-keygen],[Enable key generation (default: disabled)])],
     [ENABLED_KEYGEN=$enableval],[ENABLED_KEYGEN=no])
 
+# bcrypt_pbkdf
+AC_ARG_ENABLE([pbkdf-bcrypt],
+    [AS_HELP_STRING([--enable-pbkdf-bcrypt],[Enable the bcrypt_pbkdf key derivation function (default: disabled)])],
+    [ENABLED_PBKDF_BCRYPT=$enableval],[ENABLED_PBKDF_BCRYPT=no])
+
 # Keyboard Interactive
 AC_ARG_ENABLE([keyboard-interactive],
     [AS_HELP_STRING([--enable-keyboard-interactive],[Enable keyboard interactive authentication (default: disabled)])],
@@ -261,7 +266,7 @@ AC_ARG_ENABLE([distro],
 AS_IF([test "x$ENABLED_DISTRO" = "xyes"],
       [ENABLED_ALL=yes; enable_shared=yes; enable_static=yes])
 AS_IF([test "x$ENABLED_ALL" = "xyes"],
-      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes; ENABLED_KEYBOARD_INTERACTIVE=yes])
+      [ENABLED_KEYGEN=yes; ENABLED_SCP=yes; ENABLED_SFTP=yes; ENABLED_FWD=yes; ENABLED_SHELL=yes; ENABLED_AGENT=yes; ENABLED_SSHD=yes; ENABLED_SSHCLIENT=yes; ENABLED_CERTS=yes; ENABLED_KEYBOARD_INTERACTIVE=yes; ENABLED_PBKDF_BCRYPT=yes])
 AS_IF([test "x$ENABLED_SSHD" = "xyes"],
       [ENABLED_SHELL=yes])
 
@@ -287,6 +292,26 @@ AS_IF([test "x$ENABLED_SSHCLIENT" = "xyes"],[
             ENABLED_SSHCLIENT=no])],
     [AC_MSG_RESULT([no])])])
 
+# bcrypt_pbkdf hashes with SHA-512. As with the client app, asking for it
+# outright is an error, getting it from --enable-all only drops it.
+AS_IF([test "x$ENABLED_PBKDF_BCRYPT" = "xyes"],[
+  AC_MSG_CHECKING([whether wolfSSL has SHA-512])
+  AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([[#ifdef WOLFSSL_USER_SETTINGS
+                       #include <wolfssl/wolfcrypt/settings.h>
+                       #else
+                       #include <wolfssl/options.h>
+                       #endif]],
+                     [[#ifndef WOLFSSL_SHA512
+                       #error "no SHA-512"
+                       #endif]])],
+    [AC_MSG_RESULT([yes])],
+    [AC_MSG_RESULT([no])
+     AS_IF([test "x$enable_pbkdf_bcrypt" = "xyes"],
+           [AC_MSG_ERROR([--enable-pbkdf-bcrypt requires wolfSSL with SHA-512.])],
+           [AC_MSG_NOTICE([wolfSSL has no SHA-512, not building bcrypt_pbkdf])
+            ENABLED_PBKDF_BCRYPT=no])])])
+
 # Set the defined flags for the code.
 AS_IF([test "x$ENABLED_INLINE" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_INLINE"])
@@ -296,6 +321,8 @@ AS_IF([test "x$ENABLED_CLIENT" = "xno"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DNO_WOLFSSH_CLIENT"])
 AS_IF([test "x$ENABLED_KEYGEN" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYGEN"])
+AS_IF([test "x$ENABLED_PBKDF_BCRYPT" = "xyes"],
+      [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_PBKDF_BCRYPT"])
 AS_IF([test "x$ENABLED_KEYBOARD_INTERACTIVE" = "xyes"],
       [AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFSSH_KEYBOARD_INTERACTIVE"])
 AS_IF([test "x$ENABLED_SCP" = "xyes"],
@@ -412,6 +439,7 @@ AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_INLINE],[test "x$ENABLED_INLINE" = "xyes"])
 AM_CONDITIONAL([BUILD_KEYGEN],[test "x$ENABLED_KEYGEN" = "xyes"])
+AM_CONDITIONAL([BUILD_PBKDF_BCRYPT],[test "x$ENABLED_PBKDF_BCRYPT" = "xyes"])
 AM_CONDITIONAL([BUILD_SCP],[test "x$ENABLED_SCP" = "xyes"])
 AM_CONDITIONAL([BUILD_SFTP],[test "x$ENABLED_SFTP" = "xyes"])
 AM_CONDITIONAL([BUILD_FWD],[test "x$ENABLED_FWD" = "xyes"])
@@ -477,6 +505,7 @@ AS_ECHO(["   Features"])
 AS_ECHO(["   * Inline Code:               $ENABLED_INLINE"])
 AS_ECHO(["   * Small stack:               $ENABLED_SMALLSTACK"])
 AS_ECHO(["   * keygen:                    $ENABLED_KEYGEN"])
+AS_ECHO(["   * bcrypt_pbkdf:              $ENABLED_PBKDF_BCRYPT"])
 AS_ECHO(["   * keyboard interactive:      $ENABLED_KEYBOARD_INTERACTIVE"])
 AS_ECHO(["   * psuedo-terminal:           $ENABLED_TERM"])
 AS_ECHO(["   * echoserver shell support:  $ENABLED_SHELL"])
