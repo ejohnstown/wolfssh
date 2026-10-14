@@ -114,6 +114,9 @@ jobs:
           sed -i.bak "s/hansel/$USER/" ./keys/hansel-key-ecc.pub
           chmod 600 ./keys/hansel-key-*.pem
           chmod 600 ./keys/hansel-key-*.pub
+          # The runner account has a locked password and sshd refuses
+          # every login to a locked account, pubkey included.
+          sudo usermod -p '*' $USER
           sudo mkdir -p /run/sshd
           sudo chmod 755 /run/sshd
           sudo /usr/sbin/sshd -p 22222 -f sshd-config-test.txt -E $PWD/sshd-log.txt
