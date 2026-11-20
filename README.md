@@ -59,6 +59,11 @@ up to 128kB of data before sending a channel window adjust message. An
 example of setting a window size for new channels would be as follows
 `./configure CPPFLAGS="-DDEFAULT_WINDOW_SZ=16384"`
 
+`DEFAULT_MAX_PACKET_SZ` (32kB) is the largest channel data packet a new
+channel accepts, unless `wolfSSH_CTX_SetWindowPacketSize()` sets another.
+It is enforced, not only advertised: a received packet larger than it
+fails with `WS_RECV_OVERFLOW_E`, and sends are split to fit it.
+
 For 32bit Linux platforms you can add support for files > 2GB by compiling
 with `CFLAGS=-D_FILE_OFFSET_BITS=64`.
 

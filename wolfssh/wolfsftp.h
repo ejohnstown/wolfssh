@@ -94,6 +94,9 @@ enum WS_SFTPConnectStates {
 enum {
     WOLFSSH_SFTP_VERSION = 3,
     WOLFSSH_SFTP_HEADER = 9,
+    /* Largest handle either side will hold. A wolfSSH server's handles are
+     * WOLFSSH_HANDLE_ID_SZ (8) bytes, so it can be no smaller than 8; other
+     * servers may send handles up to the draft's limit of 256. */
     WOLFSSH_MAX_HANDLE = 256
 };
 
@@ -263,6 +266,10 @@ WOLFSSH_LOCAL int wolfSSH_SFTP_OpenDir(WOLFSSH* ssh, byte* buf, word32 bufSz);
  */
 WOLFSSH_API int wolfSSH_SFTP_SetDefaultPath(WOLFSSH* ssh, const char* path);
 WOLFSSH_API int wolfSSH_SFTP_SetConfinePath(WOLFSSH* ssh, const char* path);
+/* The client keeps no working directory. RealPath only resolves a path and
+ * STAT only checks one, so an app that implements cd keeps its own directory
+ * and replaces it after a successful STAT, as examples/sftpclient does with
+ * workingDir. */
 WOLFSSH_API WS_SFTPNAME* wolfSSH_SFTP_RealPath(WOLFSSH* ssh, char* dir);
 WOLFSSH_API int wolfSSH_SFTP_Close(WOLFSSH* ssh, byte* handle, word32 handleSz);
 WOLFSSH_API int wolfSSH_SFTP_Open(WOLFSSH* ssh, char* dir, word32 reason,
