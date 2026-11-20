@@ -2683,14 +2683,20 @@ static int test_DoReceive_RejectsMisalignedCtr(void)
         goto done5;
     }
 
-    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap, INVALID_DEVID) != 0
-            || wc_AesSetKey(&ssh->decryptCipher.aes, key, sizeof(key), iv,
-                AES_ENCRYPTION) != 0) {
+    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
+            INVALID_DEVID) != 0) {
         result = -805;
         goto done5;
     }
+    /* claim the context before setting the key so wolfSSH_free frees it
+     * even if the key set fails */
     ssh->decryptCipher.isInit = 1;
     ssh->decryptCipher.cipherType = ID_AES256_CTR;
+    if (wc_AesSetKey(&ssh->decryptCipher.aes, key, sizeof(key), iv,
+            AES_ENCRYPTION) != 0) {
+        result = -810;
+        goto done5;
+    }
     ssh->peerEncryptId = ID_AES256_CTR;
     ssh->peerAeadMode = 0;
     ssh->peerBlockSz = AES_BLOCK_SIZE;
@@ -2841,14 +2847,19 @@ static int test_DoReceive_CbcRejectDiscards(void)
         WMEMSET(record + sizeof(pkt), 0, WC_SHA256_DIGEST_SIZE);
 
         if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
-                    INVALID_DEVID) != 0
-                || wc_AesSetKey(&ssh->decryptCipher.aes, key, sizeof(key),
-                    iv, AES_DECRYPTION) != 0) {
+                    INVALID_DEVID) != 0) {
             result = -844;
             goto done6;
         }
+        /* claim the context before setting the key so wolfSSH_free frees it
+         * even if the key set fails */
         ssh->decryptCipher.isInit = 1;
         ssh->decryptCipher.cipherType = ID_AES128_CBC;
+        if (wc_AesSetKey(&ssh->decryptCipher.aes, key, sizeof(key),
+                    iv, AES_DECRYPTION) != 0) {
+            result = -852;
+            goto done6;
+        }
         ssh->peerEncryptId = ID_AES128_CBC;
         ssh->peerAeadMode = 0;
         ssh->peerBlockSz = AES_BLOCK_SIZE;
@@ -3124,13 +3135,19 @@ static int test_DoReceive_RejectsMisalignedAead(void)
     }
     totalLen = UINT32_SZ + payloadSz + AES_BLOCK_SIZE;
 
-    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap, INVALID_DEVID) != 0
-            || wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+    if (wc_AesInit(&ssh->decryptCipher.aes, ssh->ctx->heap,
+            INVALID_DEVID) != 0) {
         result = -786;
         goto done4;
     }
+    /* claim the context before setting the key so wolfSSH_free frees it
+     * even if the key set fails */
     ssh->decryptCipher.isInit = 1;
     ssh->decryptCipher.cipherType = ID_AES256_GCM;
+    if (wc_AesGcmSetKey(&ssh->decryptCipher.aes, key, sizeof(key)) != 0) {
+        result = -790;
+        goto done4;
+    }
     ssh->peerEncryptId = ID_AES256_GCM;
     ssh->peerAeadMode = 1;
     ssh->peerBlockSz = AES_BLOCK_SIZE;
