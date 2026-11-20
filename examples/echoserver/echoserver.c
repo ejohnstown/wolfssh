@@ -735,9 +735,14 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
         }
         else {
             fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
-            fwdCbCtx->hostPort = port;
-            fwdCbCtx->isDirect = 1;
-            appCtx->state = APP_STATE_CONNECT;
+            if (fwdCbCtx->hostName == NULL) {
+                ret = WS_FWD_SETUP_E;
+            }
+            else {
+                fwdCbCtx->hostPort = port;
+                fwdCbCtx->isDirect = 1;
+                appCtx->state = APP_STATE_CONNECT;
+            }
         }
     }
     else if (action == WOLFSSH_FWD_LOCAL_CLEANUP) {
@@ -772,10 +777,15 @@ static int wolfSSH_FwdDefaultActions(WS_FwdCbAction action, void* vCtx,
 
         fwdCbCtx->hostName = WSTRDUP(name, NULL, 0);
         fwdCbCtx->hostPort = port;
-
-        appCtx->listenFd = socket(AF_INET, SOCK_STREAM, 0);
-        if (appCtx->listenFd == -1) {
+        if (fwdCbCtx->hostName == NULL) {
             ret = -1;
+        }
+
+        if (ret == 0) {
+            appCtx->listenFd = socket(AF_INET, SOCK_STREAM, 0);
+            if (appCtx->listenFd == -1) {
+                ret = -1;
+            }
         }
 
     #ifndef USE_WINDOWS_API
@@ -2218,6 +2228,14 @@ static int ssh_worker(thread_ctx_t* threadCtx)
                                 WSTRDUP(addr, NULL, 0);
                             threadCtx->fwdCbCtx.originPort =
                                 ntohs(originAddr.sin6_port);
+                            if (threadCtx->fwdCbCtx.originName == NULL) {
+                                /* No channel can open without the origin;
+                                 * drop the connection and keep listening. */
+                                WCLOSESOCKET(fwdFd);
+                                fwdFd = -1;
+                                threadCtx->fwdCtx.appFd = -1;
+                                threadCtx->fwdCtx.state = APP_STATE_LISTEN;
+                            }
                         }
                     }
                 }
