@@ -1093,15 +1093,53 @@ static int test_RsaKeyGen(void)
 #ifndef WOLFSSH_NO_ECDSA
 static int test_EcdsaKeyGen(void)
 {
+    static const struct {
+        word32 size;
+        int curveId;
+    } cases[] = {
+        { WOLFSSH_ECDSAKEY_PRIME256, ECC_SECP256R1 },
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP384
+        { WOLFSSH_ECDSAKEY_PRIME384, ECC_SECP384R1 },
+    #endif
+    #ifndef WOLFSSH_NO_ECDSA_SHA2_NISTP521
+        { WOLFSSH_ECDSAKEY_PRIME521, ECC_SECP521R1 },
+    #endif
+    };
     int result = 0;
     byte der[1200];
     int derSz;
+    word32 i;
 
-    derSz = wolfSSH_MakeEcdsaKey(der, sizeof(der),
-                               WOLFSSH_ECDSAKEY_PRIME256);
-    if (derSz < 0) {
-        printf("EcdsaKeyGen: MakeEcdsaKey failed\n");
-        result = -104;
+    for (i = 0; result == 0 && i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ecc_key key;
+        word32 idx = 0;
+
+        derSz = wolfSSH_MakeEcdsaKey(der, sizeof(der), cases[i].size);
+        if (derSz < 0) {
+            printf("EcdsaKeyGen: MakeEcdsaKey(%u) failed\n", cases[i].size);
+            result = -104;
+            break;
+        }
+        if (wc_ecc_init(&key) != 0) {
+            result = -106;
+            break;
+        }
+        if (wc_EccPrivateKeyDecode(der, &idx, &key, (word32)derSz) != 0
+                || key.dp == NULL || key.dp->id != cases[i].curveId) {
+            printf("EcdsaKeyGen: size %u gave the wrong curve\n",
+                    cases[i].size);
+            result = -107;
+        }
+        wc_ecc_free(&key);
+    }
+
+    /* 512 is brainpoolP512r1's size, which SSH has no algorithm for. */
+    if (result == 0) {
+        derSz = wolfSSH_MakeEcdsaKey(der, sizeof(der), 512);
+        if (derSz != WS_BAD_ARGUMENT) {
+            printf("EcdsaKeyGen: MakeEcdsaKey(512) not rejected\n");
+            result = -108;
+        }
     }
 
     return result;

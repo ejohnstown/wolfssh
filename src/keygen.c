@@ -143,9 +143,29 @@ int wolfSSH_MakeEcdsaKey(byte* out, word32 outSz, word32 size)
 #ifndef WOLFSSH_NO_ECDSA
 
     int ret = WS_SUCCESS;
+    int curveId;
     WC_RNG rng;
 
     WLOG(WS_LOG_DEBUG, "Entering wolfSSH_MakeEcdsaKey()");
+
+    /* wc_ecc_make_key() takes a size as a minimum and returns whatever
+     * curve is next, so name the curve. */
+    switch (size) {
+        case WOLFSSH_ECDSAKEY_PRIME256:
+            curveId = ECC_SECP256R1;
+            break;
+        case WOLFSSH_ECDSAKEY_PRIME384:
+            curveId = ECC_SECP384R1;
+            break;
+        case WOLFSSH_ECDSAKEY_PRIME521:
+            curveId = ECC_SECP521R1;
+            break;
+        default:
+            WLOG(WS_LOG_DEBUG, "No SSH curve of size %u", size);
+            WLOG(WS_LOG_DEBUG, "Leaving wolfSSH_MakeEcdsaKey(), ret = %d",
+                    WS_BAD_ARGUMENT);
+            return WS_BAD_ARGUMENT;
+    }
 
     if (wc_InitRng(&rng) != 0) {
         WLOG(WS_LOG_DEBUG, "Couldn't create RNG");
@@ -161,7 +181,8 @@ int wolfSSH_MakeEcdsaKey(byte* out, word32 outSz, word32 size)
 
         if (ret == WS_SUCCESS) {
             keyInit = 1;
-            ret = wc_ecc_make_key(&rng, size/8, &key);
+            ret = wc_ecc_make_key_ex(&rng, (int)((size + 7) / 8), &key,
+                    curveId);
             if (ret != 0) {
                 WLOG(WS_LOG_DEBUG, "ECDSA key generation failed");
                 ret = WS_CRYPTO_FAILED;
