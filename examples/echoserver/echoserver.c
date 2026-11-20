@@ -1414,9 +1414,8 @@ static int app_drain_to_channel(WOLFSSH* ssh, WS_AppCtx* appCtx,
         }
         else if (cnt == WS_WINDOW_FULL || cnt == WS_REKEYING
                 || cnt == WS_CHANNEL_NOT_CONF || cnt == WS_CHAN_RXD) {
-            /* Owed, not failed: put back the code from before the send. A
-             * WS_WINDOW_FULL left here fails DoKexInit() on the peer's next
-             * KEXINIT and ends the session. */
+            /* Owed, not failed: put back the code from before the send, so
+             * the worker's later wolfSSH_get_error() does not read it. */
             ssh->error = savedError;
         }
         else {

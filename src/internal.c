@@ -14785,8 +14785,9 @@ static int DoPacket(WOLFSSH* ssh, byte* bufferConsumed)
             WLOG(WS_LOG_DEBUG, "Decoding MSGID_KEXINIT");
             ret = DoKexInit(ssh, buf + idx, payloadSz, &payloadIdx);
             /* Don't answer a KEXINIT that failed to negotiate; DoKexInit()
-             * has already disconnected. A healthy rekey lands here as
-             * WS_REKEYING, so this cannot test for WS_SUCCESS. */
+             * has already disconnected. A rekey whose KEXINIT reply is still
+             * queued returns WS_WANT_WRITE, so this cannot test for
+             * WS_SUCCESS. */
             if (!IsKexMatchError(ret) && ssh->isKeying &&
                     ssh->connectState == CONNECT_SERVER_CHANNEL_REQUEST_DONE) {
                 if (ssh->handshake->kexId == ID_DH_GEX_SHA256) {
